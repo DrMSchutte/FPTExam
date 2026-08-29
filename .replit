@@ -1,0 +1,16 @@
+entrypoint = "server/src/index.ts"
+modules = ["nodejs-20", "postgresql-16"]
+
+[nix]
+channel = "stable-24_05"
+
+[deployment]
+build = ["npm", "run", "build"]
+run = ["npm", "run", "start"]
+
+[[ports]]
+localPort = 4000
+externalPort = 80
+
+[env]
+NODE_ENV = "production"

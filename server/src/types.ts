@@ -1,0 +1,11 @@
+// Server-local type aliases derived directly from the Drizzle schema, rather
+// than importing shared/types.ts. TypeScript's rootDir emit rules don't allow
+// a package to emit .js for a file that lives outside it (shared/ sits next
+// to server/, not inside it), so the server derives its own copy from the
+// single source of truth that already exists for these values: the pg enums
+// in db/schema.ts. The client (which never emits, just bundles) still
+// imports the richer shared/types.ts directly - see client/src/lib.
+import { userRoleEnum, employmentRelationshipEnum } from "./db/schema.js";
+
+export type UserRole = (typeof userRoleEnum.enumValues)[number];
+export type EmploymentRelationship = (typeof employmentRelationshipEnum.enumValues)[number];
