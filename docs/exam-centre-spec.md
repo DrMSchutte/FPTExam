@@ -1,4 +1,6 @@
-# FPT Academy Secure Online Exam Centre
+# FPT Exam
+
+FPT Academy's Secure Online Exam Centre
 
 ## Functional & Technical Specification — Proctored FISA / Final Exams Platform
 

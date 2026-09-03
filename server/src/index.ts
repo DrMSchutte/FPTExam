@@ -34,5 +34,5 @@ if (process.env.NODE_ENV === "production") {
 
 const port = Number(process.env.PORT ?? 4000);
 app.listen(port, () => {
-  console.log(`FPT Exam Centre API listening on port ${port}`);
+  console.log(`FPT Exam API listening on port ${port}`);
 });

@@ -1,4 +1,6 @@
-# FPT Academy Secure Online Exam Centre
+# FPT Exam
+
+FPT Academy's secure online exam centre.
 
 Phase 1 scaffold: repo structure, full database schema, and authentication
 (login, MFA, RBAC) for the proctored exam platform described in

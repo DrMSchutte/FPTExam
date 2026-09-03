@@ -7,7 +7,7 @@ export function generateMfaSecret(): string {
 
 /** Builds an otpauth:// URI a user can scan into an authenticator app. */
 export function buildMfaOtpAuthUrl(email: string, secret: string): string {
-  return authenticator.keyuri(email, "FPT Exam Centre", secret);
+  return authenticator.keyuri(email, "FPT Exam", secret);
 }
 
 export function verifyMfaToken(token: string, secret: string): boolean {

@@ -1,4 +1,4 @@
-# FPT Academy Exam Centre — Engineering Build Brief
+# FPT Exam — Engineering Build Brief
 
 **Purpose:** this is the code-ready companion to `exam-centre-spec.md`. That document explains *what* to build and *why* (roles, QCTO/POPIA compliance, exam lifecycle). This document commits to concrete technology choices, schema, API surface, and a phased task list so it can be pasted directly into Replit's Agent (or handed to a developer) to start building. Where the spec said "either/or," this document picks one, so there's nothing left ambiguous for a coding agent to guess at.
 
