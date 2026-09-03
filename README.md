@@ -66,8 +66,28 @@ This repo is built to run on Replit (`.replit` sets the build/run commands and
 provisions Postgres), but nothing about it is Replit-specific — `npm run
 build && npm start` with a `DATABASE_URL` pointed at any Postgres instance
 works anywhere (a VM, Render, Railway, Fly.io, etc.). Object storage (R2/S3)
-and the AI engines from the build brief are not wired up yet, so there are no
-other required secrets beyond what's in `server/.env.example`.
+is not wired up yet, so there are no other required secrets beyond what's in
+`server/.env.example` (the AI engines' secret, `ANTHROPIC_API_KEY`, *is*
+wired up as of Phase 5).
+
+### Getting this onto Replit
+
+1. Go to [replit.com/import](https://replit.com/import), sign in (or create
+   an account), choose **ZIP**, and upload this project's zip file.
+2. Once the import finishes, open the **Secrets** tool (in the left-hand
+   tool dock) and add each of the non-empty values from
+   `server/.env.example` as a Secret — `JWT_SECRET`, `APP_BASE_URL`,
+   `ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `ANTHROPIC_API_KEY`.
+   Set `APP_BASE_URL` to the `https://...replit.dev` (or `.replit.app`)
+   address Replit gives this Repl. Leave `DATABASE_URL` alone if Replit's
+   Database tool already set one for you; otherwise add it there too.
+3. Open the **Shell** tool and run once:
+   ```bash
+   npm run db:migrate
+   npm run db:seed
+   ```
+4. Click **Run**. First run rebuilds the client and server, so it takes a
+   minute; after that, open the app at the address Replit shows.
 
 ## Next steps
 
