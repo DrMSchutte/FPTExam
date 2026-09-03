@@ -5,7 +5,20 @@
 // single source of truth that already exists for these values: the pg enums
 // in db/schema.ts. The client (which never emits, just bundles) still
 // imports the richer shared/types.ts directly - see client/src/lib.
-import { userRoleEnum, employmentRelationshipEnum } from "./db/schema.js";
+import { userRoleEnum, employmentRelationshipEnum, instrumentSourceEnum } from "./db/schema.js";
 
 export type UserRole = (typeof userRoleEnum.enumValues)[number];
 export type EmploymentRelationship = (typeof employmentRelationshipEnum.enumValues)[number];
+export type InstrumentSource = (typeof instrumentSourceEnum.enumValues)[number];
+
+export type QuestionType = "mcq" | "short_answer" | "long_answer" | "practical_upload";
+
+export interface Question {
+  id: string;
+  type: QuestionType;
+  prompt: string;
+  maxMark: number;
+  options?: string[];
+  modelAnswerOrRubric?: string;
+  eloRef?: string;
+}

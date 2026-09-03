@@ -36,6 +36,7 @@ export const qctoRegistrationTypeEnum = pgEnum("qcto_registration_type", [
 
 export const instrumentSourceEnum = pgEnum("instrument_source", [
   "manual",
+  "ai_generated",
   "curricula_builder",
 ]);
 
@@ -95,6 +96,27 @@ export const qualifications = pgTable("qualifications", {
   title: text("title").notNull(),
   qctoRegistrationType: qctoRegistrationTypeEnum("qcto_registration_type").notNull(),
   aqpReference: text("aqp_reference"),
+  // The SAQA-issued qualification ID/code (e.g. as used in
+  // allqs.saqa.org.za/showQualification.php?id=<this>). Nullable - only
+  // required to use the AI-from-SAQA instrument intake path (Section 5.6 of
+  // the build brief).
+  saqaQualificationId: text("saqa_qualification_id"),
+});
+
+// A durable snapshot of what was parsed off a SAQA qualification page at the
+// moment an AI-generated instrument was drafted from it - SAQA doesn't
+// version this content, so this is the audit record of exactly what
+// justified the paper, even if the live page changes later.
+export const saqaQualificationExtracts = pgTable("saqa_qualification_extracts", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  qualificationId: uuid("qualification_id")
+    .notNull()
+    .references(() => qualifications.id),
+  saqaQualificationId: text("saqa_qualification_id").notNull(),
+  exitLevelOutcomes: jsonb("exit_level_outcomes").notNull(),
+  assessmentCriteria: jsonb("assessment_criteria").notNull(),
+  sourceUrl: text("source_url").notNull(),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const assessmentInstruments = pgTable("assessment_instruments", {
@@ -108,6 +130,9 @@ export const assessmentInstruments = pgTable("assessment_instruments", {
   permittedMaterials: jsonb("permitted_materials").default(sql`'[]'::jsonb`),
   passMarkOrCompetencyRule: jsonb("pass_mark_or_competency_rule"),
   source: instrumentSourceEnum("source").notNull().default("manual"),
+  // Set only when source = 'ai_generated' - the exact SAQA snapshot the
+  // paper was drafted from.
+  saqaExtractId: uuid("saqa_extract_id").references(() => saqaQualificationExtracts.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

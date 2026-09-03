@@ -60,15 +60,38 @@ export default function AdminAssessments() {
   // ---- Qualification form ----
   const [qTitle, setQTitle] = useState("");
   const [qType, setQType] = useState<"fisa" | "eisa">("eisa");
+  const [qSaqaId, setQSaqaId] = useState("");
 
   async function createQualification(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setMessage(null);
     try {
-      await api.post("/qualifications", { title: qTitle, qctoRegistrationType: qType });
+      await api.post("/qualifications", {
+        title: qTitle,
+        qctoRegistrationType: qType,
+        saqaQualificationId: qSaqaId || undefined,
+      });
       setQTitle("");
+      setQSaqaId("");
       setMessage("Qualification created.");
+      await loadAll();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  // ---- Inline "set SAQA ID" editor for existing qualifications ----
+  const [saqaEditId, setSaqaEditId] = useState<string | null>(null);
+  const [saqaEditValue, setSaqaEditValue] = useState("");
+
+  async function saveSaqaId(qualificationId: string) {
+    setError(null);
+    setMessage(null);
+    try {
+      await api.patch(`/qualifications/${qualificationId}`, { saqaQualificationId: saqaEditValue });
+      setSaqaEditId(null);
+      setMessage("SAQA qualification ID saved.");
       await loadAll();
     } catch (err) {
       setError((err as Error).message);
@@ -109,6 +132,43 @@ export default function AdminAssessments() {
       await loadAll();
     } catch (err) {
       setError((err as Error).message);
+    }
+  }
+
+  // ---- Generate from SAQA ----
+  const [genQualId, setGenQualId] = useState("");
+  const [genVersion, setGenVersion] = useState("");
+  const [genTime, setGenTime] = useState(120);
+  const [genMaterials, setGenMaterials] = useState("");
+  const [genLoading, setGenLoading] = useState(false);
+  const [genCoverageNotes, setGenCoverageNotes] = useState<string | null>(null);
+
+  async function generateFromSaqa(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setMessage(null);
+    setGenCoverageNotes(null);
+    setGenLoading(true);
+    try {
+      const created = await api.post<AssessmentInstrument & { coverageNotes: string }>(
+        "/instruments/generate",
+        {
+          qualificationId: genQualId,
+          version: genVersion,
+          timeAllocationMinutes: Number(genTime),
+          permittedMaterials: genMaterials
+            ? genMaterials.split(",").map((s) => s.trim()).filter(Boolean)
+            : [],
+        }
+      );
+      setMessage(`Instrument generated from SAQA (${created.questions.length} questions).`);
+      setGenCoverageNotes(created.coverageNotes);
+      setGenVersion("");
+      await loadAll();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setGenLoading(false);
     }
   }
 
@@ -200,18 +260,141 @@ export default function AdminAssessments() {
               <option value="fisa">FISA (legacy)</option>
             </select>
           </div>
+          <div>
+            <label className="block text-xs text-gray-500">SAQA qualification ID (optional)</label>
+            <input
+              value={qSaqaId}
+              onChange={(e) => setQSaqaId(e.target.value)}
+              placeholder="e.g. 4911"
+              className="rounded border border-gray-300 px-3 py-2 text-sm w-40"
+            />
+          </div>
           <button className="rounded bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700">
             Add qualification
           </button>
         </form>
+        <p className="text-xs text-gray-400 mb-3">
+          The SAQA ID is the id= value from that qualification's page on allqs.saqa.org.za - set it here (or
+          later, inline below) to use the "Generate from SAQA" option further down.
+        </p>
         <ul className="text-sm space-y-1">
           {qualifications.map((q) => (
-            <li key={q.id} className="text-gray-700">
-              {q.title} <span className="text-gray-400">({q.qctoRegistrationType.toUpperCase()})</span>
+            <li key={q.id} className="text-gray-700 flex items-center gap-2">
+              <span>
+                {q.title} <span className="text-gray-400">({q.qctoRegistrationType.toUpperCase()})</span>
+              </span>
+              {saqaEditId === q.id ? (
+                <>
+                  <input
+                    autoFocus
+                    value={saqaEditValue}
+                    onChange={(e) => setSaqaEditValue(e.target.value)}
+                    placeholder="SAQA ID"
+                    className="rounded border border-gray-300 px-2 py-0.5 text-xs w-28"
+                  />
+                  <button onClick={() => saveSaqaId(q.id)} className="text-xs text-brand-600 underline">
+                    Save
+                  </button>
+                  <button onClick={() => setSaqaEditId(null)} className="text-xs text-gray-400 underline">
+                    Cancel
+                  </button>
+                </>
+              ) : q.saqaQualificationId ? (
+                <span className="text-xs text-gray-400">SAQA ID: {q.saqaQualificationId}</span>
+              ) : (
+                <button
+                  onClick={() => {
+                    setSaqaEditId(q.id);
+                    setSaqaEditValue("");
+                  }}
+                  className="text-xs text-brand-600 underline"
+                >
+                  Set SAQA ID
+                </button>
+              )}
             </li>
           ))}
           {qualifications.length === 0 && <li className="text-gray-400">None yet.</li>}
         </ul>
+      </section>
+
+      {/* AI-generated from SAQA */}
+      <section className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-lg font-medium mb-4">Generate an Instrument from SAQA</h2>
+        <p className="text-xs text-gray-400 mb-4">
+          Fetches the qualification's Exit Level Outcomes and Associated Assessment Criteria from its public
+          SAQA record and drafts a full paper mapped to them. Available for FISA or EISA qualifications with
+          a SAQA ID set above. The result is usable immediately - edit it afterwards like any other
+          instrument if anything needs fixing. This can take a minute or two.
+        </p>
+        <form onSubmit={generateFromSaqa} className="grid grid-cols-3 gap-3 items-end">
+          <div>
+            <label className="block text-xs text-gray-500">Qualification</label>
+            <select
+              value={genQualId}
+              onChange={(e) => setGenQualId(e.target.value)}
+              required
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            >
+              <option value="">Select...</option>
+              {qualifications
+                .filter((q) => q.saqaQualificationId)
+                .map((q) => (
+                  <option key={q.id} value={q.id}>
+                    {q.title}
+                  </option>
+                ))}
+            </select>
+            {qualifications.filter((q) => q.saqaQualificationId).length === 0 && (
+              <p className="text-xs text-amber-600 mt-1">
+                No qualification has a SAQA ID set yet - add one above first.
+              </p>
+            )}
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500">Version</label>
+            <input
+              value={genVersion}
+              onChange={(e) => setGenVersion(e.target.value)}
+              required
+              placeholder="e.g. 2026-v1"
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500">Time allocation (minutes)</label>
+            <input
+              type="number"
+              min={1}
+              value={genTime}
+              onChange={(e) => setGenTime(Number(e.target.value))}
+              required
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-xs text-gray-500">Permitted materials (comma-separated)</label>
+            <input
+              value={genMaterials}
+              onChange={(e) => setGenMaterials(e.target.value)}
+              placeholder="e.g. Non-programmable calculator, SANS 10142-1 code book"
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            />
+          </div>
+          <button
+            disabled={genLoading}
+            className="rounded bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
+          >
+            {genLoading ? "Generating..." : "Generate from SAQA"}
+          </button>
+        </form>
+
+        {genCoverageNotes && (
+          <div className="mt-4 bg-brand-50 border border-brand-100 rounded p-3 text-xs text-gray-700 whitespace-pre-wrap">
+            <p className="font-medium text-brand-700 mb-1">Coverage notes from the AI:</p>
+            {genCoverageNotes}
+          </div>
+        )}
       </section>
 
       {/* Instruments */}
@@ -344,7 +527,19 @@ export default function AdminAssessments() {
             {instruments.map((i) => (
               <li key={i.id} className="text-gray-700">
                 {qualifications.find((q) => q.id === i.qualificationId)?.title ?? i.qualificationId} —{" "}
-                {i.version} ({i.questions.length} questions, {i.timeAllocationMinutes}min)
+                {i.version} ({i.questions.length} questions, {i.timeAllocationMinutes}min){" "}
+                <span
+                  className={
+                    "text-xs rounded-full px-2 py-0.5 " +
+                    (i.source === "ai_generated"
+                      ? "bg-brand-50 text-brand-700"
+                      : i.source === "curricula_builder"
+                      ? "bg-amber-50 text-amber-700"
+                      : "bg-gray-100 text-gray-500")
+                  }
+                >
+                  {i.source === "ai_generated" ? "AI-generated (SAQA)" : i.source === "curricula_builder" ? "Curricula Builder" : "Manual"}
+                </span>
               </li>
             ))}
             {instruments.length === 0 && <li className="text-gray-400">None yet.</li>}

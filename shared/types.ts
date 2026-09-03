@@ -13,7 +13,7 @@ export type EmploymentRelationship = "internal" | "external";
 
 export type QctoRegistrationType = "fisa" | "eisa";
 
-export type InstrumentSource = "manual" | "curricula_builder";
+export type InstrumentSource = "manual" | "ai_generated" | "curricula_builder";
 
 export type SessionStatus =
   | "scheduled"
@@ -62,6 +62,11 @@ export interface Question {
   maxMark: number;
   options?: string[];
   modelAnswerOrRubric?: string;
+  // Set only on AI-generated questions (source = 'ai_generated'): which SAQA
+  // Exit Level Outcome / Assessment Criterion this question addresses, in
+  // plain language - not a formal code, just a human-readable pointer for
+  // alignment/audit purposes.
+  eloRef?: string;
 }
 
 // The learner-facing paper never carries modelAnswerOrRubric - the server
@@ -73,6 +78,17 @@ export interface Qualification {
   title: string;
   qctoRegistrationType: QctoRegistrationType;
   aqpReference: string | null;
+  saqaQualificationId: string | null;
+}
+
+export interface SaqaQualificationExtract {
+  id: string;
+  qualificationId: string;
+  saqaQualificationId: string;
+  exitLevelOutcomes: string[];
+  assessmentCriteria: string[];
+  sourceUrl: string;
+  fetchedAt: string;
 }
 
 export interface AssessmentInstrument {
@@ -84,6 +100,7 @@ export interface AssessmentInstrument {
   permittedMaterials: string[];
   passMarkOrCompetencyRule: unknown;
   source: InstrumentSource;
+  saqaExtractId: string | null;
   createdAt: string;
 }
 
