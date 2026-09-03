@@ -172,6 +172,49 @@ export default function AdminAssessments() {
     }
   }
 
+  // ---- Generate from an uploaded QCTO document ----
+  const [uploadQualId, setUploadQualId] = useState("");
+  const [uploadVersion, setUploadVersion] = useState("");
+  const [uploadTime, setUploadTime] = useState(120);
+  const [uploadMaterials, setUploadMaterials] = useState("");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const [uploadCoverageNotes, setUploadCoverageNotes] = useState<string | null>(null);
+
+  async function generateFromUpload(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setMessage(null);
+    setUploadCoverageNotes(null);
+    if (!uploadFile) {
+      setError("Choose a document to upload first.");
+      return;
+    }
+    setUploadLoading(true);
+    try {
+      const form = new FormData();
+      form.append("document", uploadFile);
+      form.append("qualificationId", uploadQualId);
+      form.append("version", uploadVersion);
+      form.append("timeAllocationMinutes", String(uploadTime));
+      if (uploadMaterials) form.append("permittedMaterials", uploadMaterials);
+
+      const created = await api.postForm<AssessmentInstrument & { coverageNotes: string }>(
+        "/instruments/generate-from-upload",
+        form
+      );
+      setMessage(`Instrument generated from uploaded document (${created.questions.length} questions).`);
+      setUploadCoverageNotes(created.coverageNotes);
+      setUploadVersion("");
+      setUploadFile(null);
+      await loadAll();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setUploadLoading(false);
+    }
+  }
+
   // ---- Sitting form ----
   const [sitQualId, setSitQualId] = useState("");
   const [sitInstrId, setSitInstrId] = useState("");
@@ -397,6 +440,89 @@ export default function AdminAssessments() {
         )}
       </section>
 
+      {/* AI-generated from an uploaded QCTO document */}
+      <section className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-lg font-medium mb-4">Generate an Instrument from an Uploaded QCTO Document</h2>
+        <p className="text-xs text-gray-400 mb-4">
+          For a qualification where you have the actual QCTO document (a Qualification Assessment
+          Specifications / External Assessment Specifications document from your AQP — PDF or .docx, not a
+          SCORM package) rather than a SAQA ID. Upload it and the AI identifies the outcomes/assessment
+          criteria in it and drafts a full paper mapped to them, the same as the SAQA path. Usable
+          immediately; edit it afterwards like any other instrument if anything needs fixing.
+        </p>
+        <form onSubmit={generateFromUpload} className="grid grid-cols-3 gap-3 items-end">
+          <div>
+            <label className="block text-xs text-gray-500">Qualification</label>
+            <select
+              value={uploadQualId}
+              onChange={(e) => setUploadQualId(e.target.value)}
+              required
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            >
+              <option value="">Select...</option>
+              {qualifications.map((q) => (
+                <option key={q.id} value={q.id}>
+                  {q.title}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500">Version</label>
+            <input
+              value={uploadVersion}
+              onChange={(e) => setUploadVersion(e.target.value)}
+              required
+              placeholder="e.g. 2026-v1"
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500">Time allocation (minutes)</label>
+            <input
+              type="number"
+              min={1}
+              value={uploadTime}
+              onChange={(e) => setUploadTime(Number(e.target.value))}
+              required
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-xs text-gray-500">Permitted materials (comma-separated)</label>
+            <input
+              value={uploadMaterials}
+              onChange={(e) => setUploadMaterials(e.target.value)}
+              placeholder="e.g. Non-programmable calculator, SANS 10142-1 code book"
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500">Document (PDF or .docx)</label>
+            <input
+              type="file"
+              accept=".pdf,.docx,.doc,.txt"
+              onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+              required
+              className="w-full text-sm"
+            />
+          </div>
+          <button
+            disabled={uploadLoading}
+            className="rounded bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
+          >
+            {uploadLoading ? "Generating..." : "Generate from document"}
+          </button>
+        </form>
+
+        {uploadCoverageNotes && (
+          <div className="mt-4 bg-brand-50 border border-brand-100 rounded p-3 text-xs text-gray-700 whitespace-pre-wrap">
+            <p className="font-medium text-brand-700 mb-1">Coverage notes from the AI:</p>
+            {uploadCoverageNotes}
+          </div>
+        )}
+      </section>
+
       {/* Instruments */}
       <section className="bg-white rounded-lg shadow p-6">
         <h2 className="text-lg font-medium mb-4">Assessment Instruments (manual intake)</h2>
@@ -533,12 +659,20 @@ export default function AdminAssessments() {
                     "text-xs rounded-full px-2 py-0.5 " +
                     (i.source === "ai_generated"
                       ? "bg-brand-50 text-brand-700"
+                      : i.source === "qcto_upload"
+                      ? "bg-teal-50 text-teal-700"
                       : i.source === "curricula_builder"
                       ? "bg-amber-50 text-amber-700"
                       : "bg-gray-100 text-gray-500")
                   }
                 >
-                  {i.source === "ai_generated" ? "AI-generated (SAQA)" : i.source === "curricula_builder" ? "Curricula Builder" : "Manual"}
+                  {i.source === "ai_generated"
+                    ? "AI-generated (SAQA)"
+                    : i.source === "qcto_upload"
+                    ? "AI-generated (upload)"
+                    : i.source === "curricula_builder"
+                    ? "Curricula Builder"
+                    : "Manual"}
                 </span>
               </li>
             ))}

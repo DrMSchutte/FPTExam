@@ -1,11 +1,33 @@
 import { Router } from "express";
+import multer from "multer";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { assessmentInstruments, qualifications, saqaQualificationExtracts } from "../db/schema.js";
+import {
+  assessmentInstruments,
+  qualifications,
+  saqaQualificationExtracts,
+  qctoDocumentExtracts,
+} from "../db/schema.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
 import { fetchSaqaExtract, SaqaExtractError } from "../integrations/saqa/fetchQualification.js";
-import { generateInstrumentFromSaqa } from "../ai/instrumentGeneration.js";
+import {
+  extractTextFromDocument,
+  DocumentExtractionError,
+} from "../integrations/qcto/extractDocumentText.js";
+import { generateInstrumentFromSaqa, generateInstrumentFromOutcomes } from "../ai/instrumentGeneration.js";
+import {
+  extractOutcomesFromDocumentText,
+  DocumentOutcomeExtractionError,
+} from "../ai/documentOutcomeExtraction.js";
+
+// Memory storage (not disk) - documents are small (a QAS document is a few
+// pages), we only need the buffer transiently to pull text out of it, and
+// nothing about the original file needs to persist once that's done.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
+});
 
 export const instrumentsRouter = Router();
 
@@ -203,6 +225,124 @@ instrumentsRouter.post(
         passMarkOrCompetencyRule: { rule: generated.passMarkOrCompetencyRule },
         source: "ai_generated",
         saqaExtractId: extractRow.id,
+      })
+      .returning();
+
+    return res.status(201).json({ ...created, coverageNotes: generated.coverageNotes });
+  }
+);
+
+const generateFromUploadFieldsSchema = z.object({
+  qualificationId: z.string().uuid(),
+  version: z.string().min(1),
+  timeAllocationMinutes: z.coerce.number().int().positive(),
+  // Sent as a single comma-separated form field, not a JSON array -
+  // multipart/form-data doesn't carry structured fields the way a JSON body does.
+  permittedMaterials: z.string().optional(),
+});
+
+// Fourth instrument-intake path (spec Section 5 / build brief Section 5.6):
+// an Administrator uploads the actual QCTO document for a qualification - a
+// Qualification Assessment Specifications (QAS) / External Assessment
+// Specifications document, in practice a PDF or .docx (QCTO does not
+// distribute these as SCORM packages - SCORM is an e-learning content
+// packaging/tracking standard, not an assessment-paper format). Text is
+// extracted from the file, the AI identifies the outcomes/criteria in it,
+// and the same Instrument Generation Engine used for the SAQA path drafts
+// the paper. Same "usable immediately" rule as the SAQA path - no review gate.
+instrumentsRouter.post(
+  "/generate-from-upload",
+  requireAuth,
+  requireRole("administrator"),
+  upload.single("document"),
+  async (req: AuthedRequest, res) => {
+    const parsed = generateFromUploadFieldsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid request body.", detail: parsed.error.message });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: "No document file was uploaded (expected form field 'document')." });
+    }
+    const { qualificationId, version, timeAllocationMinutes } = parsed.data;
+    const permittedMaterials = parsed.data.permittedMaterials
+      ? parsed.data.permittedMaterials
+          .split(",")
+          .map((m) => m.trim())
+          .filter(Boolean)
+      : [];
+
+    const [qualification] = await db
+      .select()
+      .from(qualifications)
+      .where(eq(qualifications.id, qualificationId));
+    if (!qualification) return res.status(404).json({ error: "Qualification not found." });
+
+    let rawText: string;
+    try {
+      rawText = await extractTextFromDocument(
+        req.file.buffer,
+        req.file.mimetype,
+        req.file.originalname
+      );
+    } catch (err) {
+      if (err instanceof DocumentExtractionError) {
+        return res.status(400).json({ error: "Could not read the uploaded document.", detail: err.message });
+      }
+      throw err;
+    }
+
+    let extracted;
+    try {
+      extracted = await extractOutcomesFromDocumentText(rawText, qualification.title);
+    } catch (err) {
+      if (err instanceof DocumentOutcomeExtractionError) {
+        return res.status(502).json({
+          error: "Could not identify outcomes/assessment criteria in the uploaded document.",
+          detail: err.message,
+        });
+      }
+      throw err;
+    }
+
+    const [extractRow] = await db
+      .insert(qctoDocumentExtracts)
+      .values({
+        qualificationId,
+        originalFilename: req.file.originalname,
+        exitLevelOutcomes: extracted.exitLevelOutcomes,
+        assessmentCriteria: extracted.assessmentCriteria,
+      })
+      .returning();
+
+    let generated;
+    try {
+      generated = await generateInstrumentFromOutcomes({
+        qualificationTitle: qualification.title,
+        qctoRegistrationType: qualification.qctoRegistrationType,
+        exitLevelOutcomes: extracted.exitLevelOutcomes,
+        assessmentCriteria: extracted.assessmentCriteria,
+        timeAllocationMinutes,
+        permittedMaterials,
+        sourceDescription: `as extracted from the uploaded document "${req.file.originalname}"`,
+      });
+    } catch (err) {
+      return res.status(502).json({
+        error: "The AI could not draft an instrument from this document.",
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    const [created] = await db
+      .insert(assessmentInstruments)
+      .values({
+        qualificationId,
+        version,
+        questions: generated.questions,
+        timeAllocationMinutes,
+        permittedMaterials,
+        passMarkOrCompetencyRule: { rule: generated.passMarkOrCompetencyRule },
+        source: "qcto_upload",
+        qctoExtractId: extractRow.id,
       })
       .returning();
 

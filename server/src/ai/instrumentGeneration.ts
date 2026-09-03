@@ -22,6 +22,11 @@ export interface GenerateInstrumentInput {
   assessmentCriteria: string[];
   timeAllocationMinutes: number;
   permittedMaterials: string[];
+  // Where the ELOs/ACs above came from, for the prompt's own wording - e.g.
+  // "as published by SAQA" or "as extracted from the uploaded QCTO
+  // Assessment Specifications document". Defaults to a SAQA-shaped phrasing
+  // for backward compatibility with the existing SAQA intake path.
+  sourceDescription?: string;
 }
 
 export interface GeneratedInstrument {
@@ -81,22 +86,28 @@ const SUBMIT_TOOL = {
 
 function buildPrompt(input: GenerateInstrumentInput): string {
   const registrationLabel = input.qctoRegistrationType === "eisa" ? "EISA" : "FISA";
+  const sourceDescription = input.sourceDescription ?? "as published by SAQA";
   return `You are drafting a QCTO ${registrationLabel} final assessment paper for the qualification "${input.qualificationTitle}".
 
-The paper must be built directly from this qualification's registered Exit Level Outcomes (ELOs) and Associated Assessment Criteria (ACs), as published by SAQA. Draft a full assessment instrument: a mix of question types (multiple choice, short answer, long answer, practical/portfolio upload) appropriate to what each outcome actually requires a learner to demonstrate - don't force every outcome into the same question type. Every question must be traceable to a specific ELO/AC via its eloRef field. Aim for enough questions to cover every ELO at least once within the given time allocation; it's fine to leave a gap uncovered rather than write a weak or unsupported question - note any gap in coverageNotes instead.
+The paper must be built directly from this qualification's registered Exit Level Outcomes (ELOs) and Associated Assessment Criteria (ACs), ${sourceDescription}. Draft a full assessment instrument: a mix of question types (multiple choice, short answer, long answer, practical/portfolio upload) appropriate to what each outcome actually requires a learner to demonstrate - don't force every outcome into the same question type. Every question must be traceable to a specific ELO/AC via its eloRef field. Aim for enough questions to cover every ELO at least once within the given time allocation; it's fine to leave a gap uncovered rather than write a weak or unsupported question - note any gap in coverageNotes instead.
 
 Time allocation for the whole paper: ${input.timeAllocationMinutes} minutes.
 Permitted materials: ${input.permittedMaterials.length > 0 ? input.permittedMaterials.join(", ") : "none specified"}.
 
-EXIT LEVEL OUTCOMES (as published by SAQA):
+EXIT LEVEL OUTCOMES (${sourceDescription}):
 ${input.exitLevelOutcomes.map((elo, i) => `${i + 1}. ${elo}`).join("\n")}
 
-ASSOCIATED ASSESSMENT CRITERIA (as published by SAQA):
+ASSOCIATED ASSESSMENT CRITERIA (${sourceDescription}):
 ${input.assessmentCriteria.map((ac, i) => `${i + 1}. ${ac}`).join("\n")}
 
 Write a real model answer or rubric for every question - this is what an Assessor and an AI marking engine will use to mark real learner submissions, so it needs to be specific and usable, not a placeholder. Call submit_instrument with the result.`;
 }
 
+// Drafts a full instrument from a set of Exit Level Outcomes / Assessment
+// Criteria, regardless of where they came from - a SAQA qualification page
+// (input.sourceDescription left as the default) or an uploaded QCTO document
+// (pass a sourceDescription describing that instead). Kept under its
+// original name for the existing SAQA call site; genuinely source-agnostic.
 export async function generateInstrumentFromSaqa(
   input: GenerateInstrumentInput
 ): Promise<GeneratedInstrument> {
@@ -150,3 +161,8 @@ export async function generateInstrumentFromSaqa(
     coverageNotes: raw.coverageNotes,
   };
 }
+
+// Alias used by the QCTO-document-upload intake path (routes/instruments.ts)
+// - same engine, just named for what it actually does rather than the first
+// source it was built for.
+export const generateInstrumentFromOutcomes = generateInstrumentFromSaqa;

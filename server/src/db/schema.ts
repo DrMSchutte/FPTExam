@@ -38,6 +38,7 @@ export const instrumentSourceEnum = pgEnum("instrument_source", [
   "manual",
   "ai_generated",
   "curricula_builder",
+  "qcto_upload",
 ]);
 
 export const sessionStatusEnum = pgEnum("session_status", [
@@ -119,6 +120,22 @@ export const saqaQualificationExtracts = pgTable("saqa_qualification_extracts", 
   fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// A durable snapshot of a QCTO document (e.g. a Qualification Assessment
+// Specifications / External Assessment Specifications document) uploaded by
+// an Administrator, and what the AI extracted from it - the audit record of
+// exactly what justified a 'qcto_upload'-sourced paper, in the same spirit as
+// saqaQualificationExtracts above.
+export const qctoDocumentExtracts = pgTable("qcto_document_extracts", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  qualificationId: uuid("qualification_id")
+    .notNull()
+    .references(() => qualifications.id),
+  originalFilename: text("original_filename").notNull(),
+  exitLevelOutcomes: jsonb("exit_level_outcomes").notNull(),
+  assessmentCriteria: jsonb("assessment_criteria").notNull(),
+  uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const assessmentInstruments = pgTable("assessment_instruments", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   qualificationId: uuid("qualification_id")
@@ -133,6 +150,9 @@ export const assessmentInstruments = pgTable("assessment_instruments", {
   // Set only when source = 'ai_generated' - the exact SAQA snapshot the
   // paper was drafted from.
   saqaExtractId: uuid("saqa_extract_id").references(() => saqaQualificationExtracts.id),
+  // Set only when source = 'qcto_upload' - the exact uploaded-document
+  // snapshot the paper was drafted from.
+  qctoExtractId: uuid("qcto_extract_id").references(() => qctoDocumentExtracts.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

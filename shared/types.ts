@@ -13,7 +13,11 @@ export type EmploymentRelationship = "internal" | "external";
 
 export type QctoRegistrationType = "fisa" | "eisa";
 
-export type InstrumentSource = "manual" | "ai_generated" | "curricula_builder";
+export type InstrumentSource =
+  | "manual"
+  | "ai_generated"
+  | "curricula_builder"
+  | "qcto_upload";
 
 export type SessionStatus =
   | "scheduled"
@@ -91,6 +95,15 @@ export interface SaqaQualificationExtract {
   fetchedAt: string;
 }
 
+export interface QctoDocumentExtract {
+  id: string;
+  qualificationId: string;
+  originalFilename: string;
+  exitLevelOutcomes: string[];
+  assessmentCriteria: string[];
+  uploadedAt: string;
+}
+
 export interface AssessmentInstrument {
   id: string;
   qualificationId: string;
@@ -101,6 +114,7 @@ export interface AssessmentInstrument {
   passMarkOrCompetencyRule: unknown;
   source: InstrumentSource;
   saqaExtractId: string | null;
+  qctoExtractId: string | null;
   createdAt: string;
 }
 
