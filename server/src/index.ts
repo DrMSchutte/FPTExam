@@ -6,6 +6,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { authRouter } from "./routes/auth.js";
 import { usersRouter } from "./routes/users.js";
+import { qualificationsRouter } from "./routes/qualifications.js";
+import { instrumentsRouter } from "./routes/instruments.js";
+import { sittingsRouter } from "./routes/sittings.js";
+import { sessionsRouter } from "./routes/sessions.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -23,6 +27,12 @@ app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 app.use("/api/auth", authRouter);
 app.use("/api/users", usersRouter);
+app.use("/api/qualifications", qualificationsRouter);
+app.use("/api/instruments", instrumentsRouter);
+app.use("/api/sittings", sittingsRouter);
+// sessionsRouter's own paths already start with /sessions or /me, so it
+// mounts at the API root rather than under an extra prefix.
+app.use("/api", sessionsRouter);
 
 // In production, serve the built client so a single Replit run command
 // (npm run build && npm start) is enough - no separate static host needed.

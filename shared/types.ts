@@ -52,3 +52,76 @@ export interface ApiError {
   error: string;
   detail?: string;
 }
+
+export type QuestionType = "mcq" | "short_answer" | "long_answer" | "practical_upload";
+
+export interface Question {
+  id: string;
+  type: QuestionType;
+  prompt: string;
+  maxMark: number;
+  options?: string[];
+  modelAnswerOrRubric?: string;
+}
+
+// The learner-facing paper never carries modelAnswerOrRubric - the server
+// strips it before responding (see server/src/routes/sessions.ts).
+export type LearnerQuestion = Omit<Question, "modelAnswerOrRubric">;
+
+export interface Qualification {
+  id: string;
+  title: string;
+  qctoRegistrationType: QctoRegistrationType;
+  aqpReference: string | null;
+}
+
+export interface AssessmentInstrument {
+  id: string;
+  qualificationId: string;
+  version: string;
+  questions: Question[];
+  timeAllocationMinutes: number;
+  permittedMaterials: string[];
+  passMarkOrCompetencyRule: unknown;
+  source: InstrumentSource;
+  createdAt: string;
+}
+
+export interface ProctoringProfile {
+  captureIntervalSeconds: number;
+  fullRecordingEnabled: boolean;
+  lockdownLevel: "none" | "standard" | "strict";
+  breaksAllowed: boolean;
+}
+
+export interface ExamSitting {
+  id: string;
+  qualificationId: string;
+  instrumentId: string;
+  cohortId: string;
+  startTime: string;
+  endTime: string;
+  proctoringProfile: ProctoringProfile;
+  assignedAssessorId: string;
+  independentInvigilationRequired: boolean;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface LearnerSittingSummary {
+  sessionId: string;
+  status: SessionStatus;
+  checkInTime: string | null;
+  submissionTime: string | null;
+  sittingId: string;
+  startTime: string;
+  endTime: string;
+  qualificationId: string;
+}
+
+export interface PaperResponse {
+  timeAllocationMinutes: number;
+  permittedMaterials: string[];
+  questions: LearnerQuestion[];
+  existingAnswers: Record<string, string>;
+}

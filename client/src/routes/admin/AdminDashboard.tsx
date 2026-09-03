@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import type { PublicUser, UserRole } from "@shared/types";
+import AdminAssessments from "./AdminAssessments";
 
 const ROLE_OPTIONS: UserRole[] = [
   "administrator",
@@ -133,10 +134,8 @@ export default function AdminDashboard() {
         </table>
       </section>
 
-      <p className="text-xs text-gray-400">
-        Qualification/instrument intake and exam sitting setup land in Phase 3 of the build
-        brief - this dashboard currently covers user registration only.
-      </p>
+      <h2 className="text-xl font-semibold text-brand-700 pt-4">Assessments</h2>
+      <AdminAssessments />
     </div>
   );
 }
