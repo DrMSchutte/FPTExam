@@ -55,7 +55,7 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center bg-brand-50">
       <div className="w-full max-w-sm bg-white rounded-lg shadow p-8">
         <h1 className="text-xl font-semibold text-brand-700 mb-1">FPT Exam</h1>
-        <p className="text-sm text-gray-500 mb-6">FPT Academy — Secure Online Exam Centre</p>
+        <p className="text-sm text-gray-500 mb-6">Secure Online Exam Centre</p>
 
         {!pendingToken ? (
           <form onSubmit={handlePasswordSubmit} className="space-y-4">
