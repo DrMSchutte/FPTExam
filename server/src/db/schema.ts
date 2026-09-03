@@ -264,12 +264,18 @@ export const moderationRecords = pgTable("moderation_records", {
   decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// A row here means "official and visible to the Learner." The normal path is
+// automatic: the moment assessor_decisions.signed_off_at is set AND a
+// moderation_records row with decision='confirmed' exists for a session,
+// insert a row here with sessionId set and cohortId/releasedBy left null -
+// no Head QA (or anyone else) has to act. cohortId + releasedBy are used
+// only for an optional Head QA export/rollup of already-released results
+// for the AQP - a convenience, never a gate. See build brief Section 5.1.
 export const resultReleases = pgTable("result_releases", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  cohortId: uuid("cohort_id").notNull(),
-  releasedBy: uuid("released_by")
-    .notNull()
-    .references(() => users.id),
+  sessionId: uuid("session_id").references(() => learnerSessions.id),
+  cohortId: uuid("cohort_id"),
+  releasedBy: uuid("released_by").references(() => users.id),
   releasedAt: timestamp("released_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

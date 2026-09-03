@@ -12,7 +12,7 @@ Status: Draft v1 — for internal review before build (target platform: Replit)
 
 ## 1. Purpose and Scope
 
-FPT Academy requires a secure, proctored online exam centre to administer **Final Integrated Summative Assessments (FISA)** and other final/certificational exams for QCTO-registered occupational qualifications. The platform must let assessors and invigilators supervise learners remotely in real time, capture visual evidence of the exam session (webcam + periodic screen captures, with optional full recording), store that evidence securely, and route both integrity findings and marking support through an AI assistant to the human assessor for final sign-off.
+FPT Academy requires a secure, proctored online exam centre to administer **Final Integrated Summative Assessments (FISA)** and other final/certificational exams for QCTO-registered occupational qualifications, built and completed entirely online. The platform must let assessors and invigilators supervise learners remotely in real time, capture visual evidence of the exam session (webcam + periodic screen captures, with optional full recording), store that evidence securely, and automatically assess each learner's submission — generating a mark/competency recommendation and per-question feedback — with **only the Assessor and Moderator** required to sign off before a result (and its feedback) becomes official and visible to the learner. No third approval layer sits in that chain: Head QA has organisation-wide oversight and hold authority, but is not a required gate on any individual result (Section 3).
 
 This document is a build specification, not code. It is written so it can be handed to a developer (or to Replit's Agent/Assistant) as a build brief, and so FPT Academy's team has a single reference for what the system must do, who is allowed to do what, and which regulatory obligations shape those decisions.
 
@@ -47,17 +47,17 @@ Subject-matter role. Receives, per learner, the submitted responses, the AI Inte
 **Moderator**
 Reviews a sample (or all, per the qualification's moderation policy) of Assessor-signed results plus the underlying integrity evidence, to confirm the process was fair, valid, reliable and unbiased, and confirms or refers back to the Assessor. Cannot edit a mark directly — moderation is a check-and-refer function, not a re-marking function, matching how INSETA describes external moderation.
 
-**Head QA** (internal Quality Assurance lead / the FPT-side equivalent of liaising with the AQP/QCTO)
-Organisation-wide oversight: final sign-off that a cohort's results are ready to submit to the AQP, visibility into every exam's full audit trail (invigilation log, recordings metadata, AI reports, assessor and moderator decisions), and the ability to place a result on hold pending investigation. Manages the escalation path when an integrity flag is serious enough to require a formal enquiry.
+**Head QA** (internal Quality Assurance lead / the FPT-side equivalent of liaising with the AQP/QCTO) — **oversight only, not a sign-off gate**
+Organisation-wide oversight: visibility into every exam's full audit trail (invigilation log, recordings metadata, AI reports, assessor and moderator decisions), and the ability to place a result on hold pending investigation. Manages the escalation path when an integrity flag is serious enough to require a formal enquiry, and can pull together the results-submission package for the AQP when needed. To be explicit, since this is a common point of confusion: **a result becomes official as soon as the Assessor signs off and the Moderator confirms — Head QA does not need to act on it.** Head QA's value is audit visibility and the ability to intervene (hold/escalate), not routine approval.
 
-| Role | Sees exam content | Can mark | Can invigilate live | Can register users | Can release results |
+| Role | Sees exam content | Can mark | Can invigilate live | Can register users | Result sign-off? |
 |---|---|---|---|---|---|
 | Administrator | No (config only) | No | No | Yes | No |
 | Learner | Own paper only | No | No | No | No |
 | Invigilator | No | No | Yes | No | No |
-| Assessor | Yes | Yes | No | No | Proposes |
-| Moderator | Yes (read) | No (refer only) | No | No | Confirms |
-| Head QA | Yes (read) | No | No | No | Final release |
+| Assessor | Yes | Yes | No | No | Yes — required |
+| Moderator | Yes (read) | No (refer only) | No | No | Yes — required, finalises the result |
+| Head QA | Yes (read), full audit trail | No | No | No | No — oversight/hold only, not required |
 
 ## 4. Exam Lifecycle
 
@@ -69,9 +69,8 @@ Organisation-wide oversight: final sign-off that a cohort's results are ready to
 6. **Submission** — Learner submits or time expires (auto-submit). Session and recording are sealed (write-once) and the incident log for that learner is finalised.
 7. **AI review** — The two AI engines (Section 7) run against the sealed session: the Integrity Engine produces a flagged-events report; the Response-Review Engine produces a suggested mark/competency recommendation per criterion against the marking guide. Both are attached to the learner's record as *recommendations*, clearly watermarked as AI-generated and not yet a result.
 8. **Assessor review & sign-off** — Assessor sees the learner's submission, the Integrity Report, and the Response-Review Report side by side, marks (accepting/editing/overriding AI suggestions as needed), and signs off. This produces a provisional result.
-9. **Moderation** — Moderator reviews the sampled/required results plus evidence, confirms or refers back.
-10. **Head QA release** — Head QA does the final release of the cohort's results, at which point they become visible to Learners and are ready for submission to the AQP/QCTO as required.
-11. **Retention & disposal** — Recordings and logs are retained per the policy in Section 10 and then disposed of automatically, unless a dispute or audit hold is active.
+9. **Moderation & release** — Moderator reviews the sampled/required results plus evidence, and confirms or refers back to the Assessor. **Moderator confirmation is the final step** — as soon as it's recorded, the result (mark/competency outcome plus the AI-generated per-question feedback) becomes official and visible to the Learner, and is ready for submission to the AQP/QCTO. No separate Head QA release action is required; Head QA can view every result and the evidence behind it at any time, and can place a hold on one before or after release if something needs investigating, but doesn't have to act for a result to go out.
+10. **Retention & disposal** — Recordings and logs are retained per the policy in Section 10 and then disposed of automatically, unless a dispute or audit hold is active.
 
 ## 5. Curricula Builder Integration (placeholder interface)
 
@@ -93,13 +92,15 @@ Curricula Builder does not yet exist as a system with a confirmed API, so this b
 
 ## 7. AI Assessment Bot
 
-Two distinct engines feed one combined recommendation dossier per learner. Neither engine has authority to finalise a result — QCTO's model puts that authority with the human Assessor (and then Moderator, then Head QA), so every AI output in this system is explicitly labelled a *recommendation* and the Assessor must actively accept, edit, or reject it before anything becomes official. This is a deliberate design constraint, not a limitation to fix later: an AQP auditing your process needs to see a human decision trail, not an automated one.
+Two distinct engines feed one combined recommendation dossier per learner, and together they do the actual assessment automatically — a suggested mark/competency outcome plus per-question feedback for every submission, without an assessor manually marking from a blank slate. Neither engine has authority to finalise a result on its own, though: QCTO's model puts that authority with humans, and this platform limits the required chain to exactly two people — the Assessor, then the Moderator. Every AI output is explicitly labelled a *recommendation* until the Assessor actively accepts, edits, or rejects it and signs off, and the Moderator confirms. Nothing beyond those two steps is required (Head QA has oversight/hold authority, not a sign-off role — Section 3). This is a deliberate design constraint, not a limitation to fix later: an AQP auditing your process needs to see a human decision trail, not a fully automated one, but that trail should be as short as QCTO's model actually requires.
 
 **7.1 Integrity Engine** — reviews the sealed screen captures, recording (if enabled), and the live-session event log for a learner's sitting, and produces a written findings report: which flags fired, at what timestamp, with the supporting screenshot/clip attached, and a plain-language summary (e.g. "3 tab-switch events between 00:12–00:14, no face-visibility issues, no multiple-face detections"). Optionally proposes an overall integrity recommendation ("no concerns" / "minor — note only" / "flag for investigation") based on FPT Academy's configurable thresholds, but always shows its reasoning and the underlying evidence rather than a bare verdict.
 
 **7.2 Response-Review Engine** — yes, the actual submitted assessment responses are reviewed, not just the proctoring feed. This engine takes the learner's submitted answers plus the marking guide/rubric from the attached `AssessmentInstrument` (Section 5) and produces, per question/criterion: a suggested mark or competent/not-yet-competent judgement, the rubric criteria it matched or missed, and a confidence indicator. For practical/portfolio-style uploads (documents, images, code, etc.) it extracts and summarises the submission against the rubric rather than marking blind. This output is explicitly a *marking aid*, presented to the Assessor next to the learner's actual submission — never released to a Learner or Moderator as a mark in its own right.
 
 **7.3 Combined dossier** — the Assessor's review screen shows, per learner: original submission, Response-Review suggestions inline against each answer, Integrity Engine findings with evidence, and a sign-off panel that logs the Assessor's final decision on every AI suggestion (accepted / edited / overridden, with an optional reason). This log is itself part of the audit trail Moderator and Head QA see.
+
+**7.4 Feedback to the Learner** — once the Assessor has signed off and the Moderator has confirmed (Section 4, step 9), the per-question feedback from the Response-Review Engine — what was correct, what was missed against the rubric, and the final mark/competency outcome — is released to the Learner alongside their result. The Learner never sees AI output before that point; what they see afterward is the human-confirmed version of it (the Assessor's edits/overrides, if any, take precedence over the AI's original suggestion).
 
 ## 8. Data Model (core entities)
 
@@ -114,7 +115,7 @@ Two distinct engines feed one combined recommendation dossier per learner. Neith
 `AIResponseReview` (id, session_id, per_question_suggestions[], generated_at)
 `AssessorDecision` (id, session_id, per_criterion_marks[], ai_suggestions_accepted/edited/overridden[], sign_off_time)
 `ModerationRecord` (id, session_id or cohort_id, decision: confirmed/referred, notes, moderator_id, timestamp)
-`ResultRelease` (id, cohort_id, released_by: head_qa_id, released_at)
+`ResultRelease` (id, session_id — set automatically the moment Assessor sign-off + Moderator confirmation both hold true for that session, no separate human action; cohort_id — set only for an optional Head QA batch export/rollup for the AQP, not a gate; released_by: null for the automatic path, or the Head QA user id for an export event; released_at)
 `ConsentRecord` (id, learner_id, sitting_id, consent_text_version, accepted_at, ip_address)
 
 ## 9. Suggested Technical Architecture (Replit-oriented)
@@ -152,7 +153,7 @@ This section is a design framework, not legal advice — have FPT Academy's comp
 2. **Phase 2 — Proctoring MVP**: identity verification, periodic screen capture, live invigilator console with presence flags, incident logging, POPIA consent flow.
 3. **Phase 3 — Recording & storage**: full optional recording, object storage integration, retention/disposal automation, chain-of-custody hashing.
 4. **Phase 4 — AI engines**: Integrity Engine, then Response-Review Engine, both as recommendation-only outputs into the Assessor's review screen.
-5. **Phase 5 — Moderation & release workflow**: Moderator and Head QA roles, sign-off gating, cohort release.
+5. **Phase 5 — Moderation & release workflow**: Moderator role, sign-off gating (Assessor + Moderator finalise a result automatically — no separate release step), and the Head QA oversight dashboard (audit trail viewer, hold capability) as a read/intervene-only role.
 6. **Phase 6 — Curricula Builder integration**: replace manual instrument intake with the live API once Curricula Builder exists.
 
 ## 13. Open Questions for FPT Academy to Confirm

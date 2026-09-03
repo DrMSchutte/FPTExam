@@ -30,7 +30,7 @@ Environment variables / Replit Secrets needed: `DATABASE_URL`, `JWT_SECRET`, `R2
       /invigilator           live console (video wall, flag feed, actions)
       /assessor              marking screen (submission + AI dossier + sign-off)
       /moderator             review + confirm/refer
-      /headqa                cohort release, audit trail viewer
+      /headqa                audit trail viewer, hold/escalate, results export (no release gate - see Section 5.1)
     /components
     /lib                     api client, websocket client, auth context
 /server
@@ -194,8 +194,9 @@ CREATE TABLE moderation_records (
 
 CREATE TABLE result_releases (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  cohort_id UUID NOT NULL,
-  released_by UUID NOT NULL REFERENCES users(id),
+  session_id UUID REFERENCES learner_sessions(id),  -- set automatically the moment Assessor sign-off + Moderator confirm both hold true (Section 5.1) - this is the normal path, no human "release" action
+  cohort_id UUID,                                    -- set only for an optional Head QA batch export event (GET /cohorts/:id/export) compiling already-released results for the AQP - not a gate, just a convenience rollup
+  released_by UUID REFERENCES users(id),              -- NULL for the automatic per-session release; set to the Head QA user id only on an export event
   released_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -222,7 +223,7 @@ CREATE TABLE background_jobs (
 
 ## 4. API Surface (REST, grouped by role)
 
-All routes under `/api`. Every route enforces RBAC middleware; the table only calls out the primary role, but Head QA has read access to everything.
+All routes under `/api`. Every route enforces RBAC middleware; the table only calls out the primary role, but Head QA has read access to everything. Note the one deliberate asymmetry: Head QA is NOT in the sign-off chain (Section 5.1) — its routes below are all read/audit/hold, never an approval action.
 
 **Auth** — `POST /auth/login`, `POST /auth/mfa/verify`, `POST /auth/logout`
 
@@ -253,12 +254,12 @@ All routes under `/api`. Every route enforces RBAC middleware; the table only ca
 
 **Moderator**
 - `GET /cohorts/:id/results`
-- `POST /sessions/:id/moderate` (confirmed / referred + notes)
+- `POST /sessions/:id/moderate` (confirmed / referred + notes) — a `confirmed` decision is what finalises and releases that session's result (Section 5.1); there is no separate release call
 
-**Head QA**
+**Head QA** (all read/audit/hold - never an approval step, see Section 5.1)
 - `GET /cohorts/:id/audit-trail`
-- `POST /cohorts/:id/release`
-- `POST /sessions/:id/hold`
+- `POST /sessions/:id/hold` (place or lift a hold on a result, before or after release)
+- `GET /cohorts/:id/export` (optional: compiles the released results in a cohort into an AQP submission package - a convenience export, not a gate)
 
 **Capture ingestion (learner client → server, during a live session)**
 - `POST /sessions/:id/capture` (multipart chunk upload: screenshot or recording segment; server computes hash, streams to R2, writes `capture_events` row)
@@ -268,7 +269,7 @@ All routes under `/api`. Every route enforces RBAC middleware; the table only ca
 ## 5. Core Workflow Logic (implement as described, not just as data shapes)
 
 **5.1 Sign-off gate (hard rule, enforce in code, not just UI)**
-A `learner_session`'s result is never visible to a Learner or included in a `result_release` unless: (a) `assessor_decisions.signed_off_at IS NOT NULL` for that session, and (b) a `moderation_records` row exists with `decision = 'confirmed'` (or the session is outside this cohort's sampling requirement, per the qualification's moderation policy). Enforce this as a DB check in the release query, not just as a workflow suggestion in the UI — an Administrator or a bug should not be able to bypass it.
+A `learner_session`'s result is never visible to a Learner unless: (a) `assessor_decisions.signed_off_at IS NOT NULL` for that session, and (b) a `moderation_records` row exists with `decision = 'confirmed'` (or the session is outside this cohort's sampling requirement, per the qualification's moderation policy). **These two conditions are the entire gate.** The moment (b) becomes true, the session's result (mark/competency outcome plus the AI-generated per-question feedback, Assessor-edited version) is released automatically — write the `result_releases` row for that session/cohort as part of the same transaction that records the `moderation_records` confirmation, rather than waiting on a separate action from anyone. Head QA is deliberately absent from this condition: it has read access to every session regardless of release state, and `POST /sessions/:id/hold` can suspend release (or un-release) independently, but no Head QA action is required for the normal path. Enforce all of this as a DB-level check, not just a workflow suggestion in the UI — an Administrator or a bug should not be able to bypass it, and neither should a missing Head QA click.
 
 **5.2 Capture loop (client-side)**
 On session start: request camera + screen permissions once; run a `setInterval` at `proctoring_profile.capture_interval_seconds` that grabs a canvas snapshot of the screen-share stream and a webcam frame, and `POST`s both to `/sessions/:id/capture`. Additionally attach `visibilitychange`, `blur`, and `paste` event listeners that immediately fire an out-of-band capture + a `tab_switch`/`paste` WebSocket event. If `full_recording_enabled`, also start `MediaRecorder` on both streams with a short `timeslice` (e.g. 5s) so chunks are emitted and uploaded continuously rather than buffered until the end.
@@ -321,7 +322,7 @@ Both outputs are stored verbatim and rendered read-only in the Assessor's dossie
 7. Build the Invigilator live console: WebSocket channel, video wall, flag feed, incident actions.
 8. Build the Assessor dossier screen (submission only, no AI yet) and the sign-off gate (Section 5.1).
 9. Wire up background job table + worker process; implement the two AI engines (Section 6) and render their output read-only in the Assessor dossier.
-10. Build Moderator and Head QA screens: moderation queue, audit trail viewer, cohort release (respecting the sign-off gate).
+10. Build the Moderator screen (moderation queue, confirm/refer — confirming is what releases the result, per Section 5.1) and the Head QA screen (audit trail viewer, hold/escalate, results export). Head QA has no approval action to build here by design.
 11. Add retention sweep job and the Learner-facing data-subject access/deletion request flow.
 12. Replace manual instrument intake with a Curricula Builder API integration once that system exists — everything downstream already reads from the same `assessment_instruments` table, so this is additive.
 
