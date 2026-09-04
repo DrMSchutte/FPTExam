@@ -1,141 +1,65 @@
-import { useEffect, useState } from "react";
-import { api } from "../../lib/api";
-import type { PublicUser, UserRole } from "@shared/types";
-import AdminAssessments from "./AdminAssessments";
+import { Routes, Route, NavLink } from "react-router-dom";
+import { useAuth } from "../../lib/auth";
+import AdminOverview from "./AdminOverview";
+import AdminQualifications from "./AdminQualifications";
+import AdminInstruments from "./AdminInstruments";
+import AdminSittings from "./AdminSittings";
+import AdminUsers from "./AdminUsers";
 
-const ROLE_OPTIONS: UserRole[] = [
-  "administrator",
-  "learner",
-  "invigilator",
-  "assessor",
-  "moderator",
-  "head_qa",
+const NAV_ITEMS = [
+  { to: "/admin", end: true, label: "Overview" },
+  { to: "/admin/qualifications", end: false, label: "Qualifications" },
+  { to: "/admin/instruments", end: false, label: "Instruments" },
+  { to: "/admin/sittings", end: false, label: "Sittings" },
+  { to: "/admin/users", end: false, label: "Users" },
 ];
 
 export default function AdminDashboard() {
-  const [users, setUsers] = useState<PublicUser[]>([]);
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [roles, setRoles] = useState<UserRole[]>([]);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  async function loadUsers() {
-    const list = await api.get<PublicUser[]>("/users");
-    setUsers(list);
-  }
-
-  useEffect(() => {
-    loadUsers();
-  }, []);
-
-  function toggleRole(role: UserRole) {
-    setRoles((prev) => (prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]));
-  }
-
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setMessage(null);
-    try {
-      const created = await api.post<{ mfaOtpAuthUrl: string | null }>("/users", {
-        name,
-        email,
-        password,
-        roles,
-      });
-      setMessage(
-        created.mfaOtpAuthUrl
-          ? "User created. Send them the MFA enrolment link (shown once, here) to scan into an authenticator app."
-          : "User created."
-      );
-      setName("");
-      setEmail("");
-      setPassword("");
-      setRoles([]);
-      await loadUsers();
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  }
+  const { user, logout } = useAuth();
 
   return (
-    <div className="max-w-4xl mx-auto p-8 space-y-8">
-      <h1 className="text-2xl font-semibold text-brand-700">Administrator</h1>
-
-      <section className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-medium mb-4">Register a user</h2>
-        <form onSubmit={handleCreate} className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <input
-              placeholder="Full name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              className="rounded border border-gray-300 px-3 py-2 text-sm"
-            />
-            <input
-              placeholder="Email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="rounded border border-gray-300 px-3 py-2 text-sm"
-            />
-          </div>
-          <input
-            placeholder="Temporary password (min 10 chars)"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-          />
-          <div className="flex flex-wrap gap-3">
-            {ROLE_OPTIONS.map((role) => (
-              <label key={role} className="flex items-center gap-1.5 text-sm">
-                <input
-                  type="checkbox"
-                  checked={roles.includes(role)}
-                  onChange={() => toggleRole(role)}
-                />
-                {role}
-              </label>
-            ))}
-          </div>
-          {error && <p className="text-sm text-red-600">{error}</p>}
-          {message && <p className="text-sm text-green-700">{message}</p>}
-          <button className="rounded bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700">
-            Create user
+    <div className="min-h-screen flex bg-gray-50">
+      <aside className="w-56 shrink-0 bg-white border-r border-gray-200 flex flex-col">
+        <div className="px-5 py-6 border-b border-gray-100">
+          <p className="text-lg font-semibold text-brand-700">FPT Exam</p>
+          <p className="text-xs text-gray-400 mt-0.5">Administrator</p>
+        </div>
+        <nav className="flex-1 px-3 py-4 space-y-1">
+          {NAV_ITEMS.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) =>
+                "block rounded px-3 py-2 text-sm font-medium " +
+                (isActive
+                  ? "bg-brand-50 text-brand-700"
+                  : "text-gray-600 hover:bg-gray-50 hover:text-gray-900")
+              }
+            >
+              {item.label}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="px-5 py-4 border-t border-gray-100">
+          {user && <p className="text-xs text-gray-400 truncate mb-2">{user.email}</p>}
+          <button onClick={() => logout()} className="text-xs text-gray-500 hover:text-gray-800 underline">
+            Sign out
           </button>
-        </form>
-      </section>
+        </div>
+      </aside>
 
-      <section className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-medium mb-4">Registered users</h2>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-gray-500 border-b">
-              <th className="py-2">Name</th>
-              <th>Email</th>
-              <th>Roles</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id} className="border-b last:border-0">
-                <td className="py-2">{u.name}</td>
-                <td>{u.email}</td>
-                <td>{u.roles.join(", ")}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
-
-      <h2 className="text-xl font-semibold text-brand-700 pt-4">Assessments</h2>
-      <AdminAssessments />
+      <main className="flex-1 min-w-0 p-8">
+        <div className="max-w-5xl mx-auto">
+          <Routes>
+            <Route index element={<AdminOverview />} />
+            <Route path="qualifications" element={<AdminQualifications />} />
+            <Route path="instruments" element={<AdminInstruments />} />
+            <Route path="sittings" element={<AdminSittings />} />
+            <Route path="users" element={<AdminUsers />} />
+          </Routes>
+        </div>
+      </main>
     </div>
   );
 }
