@@ -87,7 +87,7 @@ instrumentsRouter.post(
 instrumentsRouter.get(
   "/",
   requireAuth,
-  requireRole("administrator", "assessor", "moderator", "head_qa"),
+  requireRole("administrator", "assessor"),
   async (req, res) => {
     const qualificationId = req.query.qualificationId as string | undefined;
     const rows = qualificationId

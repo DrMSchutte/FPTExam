@@ -135,7 +135,7 @@ sittingsRouter.post(
 sittingsRouter.get(
   "/",
   requireAuth,
-  requireRole("administrator", "assessor", "moderator", "head_qa"),
+  requireRole("administrator", "assessor"),
   async (_req, res) => {
     const rows = await db.select().from(examSittings);
     return res.json(rows);

@@ -1,8 +1,15 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import type { Qualification, AssessmentInstrument, Question, QuestionType } from "@shared/types";
+import { PageHeader, Card, CardHead, Notice, Badge, Empty, PlusIcon } from "../../components/ui";
+import type { BadgeTone } from "../../components/ui";
 
-const QUESTION_TYPES: QuestionType[] = ["mcq", "short_answer", "long_answer", "practical_upload"];
+const QUESTION_TYPES: { value: QuestionType; label: string }[] = [
+  { value: "mcq", label: "Multiple choice" },
+  { value: "short_answer", label: "Short answer" },
+  { value: "long_answer", label: "Long answer" },
+  { value: "practical_upload", label: "Practical upload" },
+];
 
 function newBlankQuestion(): Question {
   return {
@@ -15,24 +22,24 @@ function newBlankQuestion(): Question {
   };
 }
 
-type Source = "manual" | "saqa" | "upload";
+// The four ways an instrument can be created (spec Section 5). "curricula" is
+// the FISA route - present from the start so the flow is visible, active once
+// Curricula Builder exposes an API.
+type Source = "manual" | "saqa" | "upload" | "curricula";
 
-const SOURCE_TABS: { key: Source; label: string }[] = [
+const SOURCE_TABS: { key: Source; label: string; disabled?: boolean }[] = [
   { key: "manual", label: "Manual entry" },
   { key: "saqa", label: "AI from SAQA" },
   { key: "upload", label: "AI from uploaded QCTO document" },
+  { key: "curricula", label: "From Curricula Builder", disabled: true },
 ];
 
-function sourceBadge(source: AssessmentInstrument["source"]) {
+function sourceBadge(source: AssessmentInstrument["source"]): { label: string; tone: BadgeTone } {
   switch (source) {
-    case "ai_generated":
-      return { label: "AI-generated (SAQA)", className: "bg-brand-50 text-brand-700" };
-    case "qcto_upload":
-      return { label: "AI-generated (upload)", className: "bg-teal-50 text-teal-700" };
-    case "curricula_builder":
-      return { label: "Curricula Builder", className: "bg-amber-50 text-amber-700" };
-    default:
-      return { label: "Manual", className: "bg-gray-100 text-gray-500" };
+    case "ai_generated": return { label: "AI · SAQA", tone: "green" };
+    case "qcto_upload": return { label: "AI · Upload", tone: "teal" };
+    case "curricula_builder": return { label: "Curricula Builder", tone: "amber" };
+    default: return { label: "Manual", tone: "gray" };
   }
 }
 
@@ -66,9 +73,6 @@ export default function AdminInstruments() {
   function updateQuestion(id: string, patch: Partial<Question>) {
     setQuestions((qs) => qs.map((q) => (q.id === id ? { ...q, ...patch } : q)));
   }
-  function removeQuestion(id: string) {
-    setQuestions((qs) => qs.filter((q) => q.id !== id));
-  }
 
   async function createInstrument(e: React.FormEvent) {
     e.preventDefault();
@@ -85,7 +89,7 @@ export default function AdminInstruments() {
           options: q.type === "mcq" ? q.options : undefined,
         })),
       });
-      setMessage("Assessment instrument created.");
+      setMessage("Instrument created.");
       setInstrVersion("");
       setQuestions([newBlankQuestion()]);
       setShowCreate(false);
@@ -95,7 +99,7 @@ export default function AdminInstruments() {
     }
   }
 
-  // ---- Generate from SAQA ----
+  // ---- AI from SAQA ----
   const [genQualId, setGenQualId] = useState("");
   const [genVersion, setGenVersion] = useState("");
   const [genTime, setGenTime] = useState(120);
@@ -110,18 +114,13 @@ export default function AdminInstruments() {
     setGenCoverageNotes(null);
     setGenLoading(true);
     try {
-      const created = await api.post<AssessmentInstrument & { coverageNotes: string }>(
-        "/instruments/generate",
-        {
-          qualificationId: genQualId,
-          version: genVersion,
-          timeAllocationMinutes: Number(genTime),
-          permittedMaterials: genMaterials
-            ? genMaterials.split(",").map((s) => s.trim()).filter(Boolean)
-            : [],
-        }
-      );
-      setMessage(`Instrument generated from SAQA (${created.questions.length} questions).`);
+      const created = await api.post<AssessmentInstrument & { coverageNotes: string }>("/instruments/generate", {
+        qualificationId: genQualId,
+        version: genVersion,
+        timeAllocationMinutes: Number(genTime),
+        permittedMaterials: genMaterials ? genMaterials.split(",").map((s) => s.trim()).filter(Boolean) : [],
+      });
+      setMessage(`Instrument drafted from SAQA (${created.questions.length} questions).`);
       setGenCoverageNotes(created.coverageNotes);
       setGenVersion("");
       await loadAll();
@@ -132,7 +131,7 @@ export default function AdminInstruments() {
     }
   }
 
-  // ---- Generate from an uploaded QCTO document ----
+  // ---- AI from uploaded QCTO document ----
   const [uploadQualId, setUploadQualId] = useState("");
   const [uploadVersion, setUploadVersion] = useState("");
   const [uploadTime, setUploadTime] = useState(120);
@@ -158,12 +157,11 @@ export default function AdminInstruments() {
       form.append("version", uploadVersion);
       form.append("timeAllocationMinutes", String(uploadTime));
       if (uploadMaterials) form.append("permittedMaterials", uploadMaterials);
-
       const created = await api.postForm<AssessmentInstrument & { coverageNotes: string }>(
         "/instruments/generate-from-upload",
         form
       );
-      setMessage(`Instrument generated from uploaded document (${created.questions.length} questions).`);
+      setMessage(`Instrument drafted from the uploaded document (${created.questions.length} questions).`);
       setUploadCoverageNotes(created.coverageNotes);
       setUploadVersion("");
       setUploadFile(null);
@@ -175,347 +173,175 @@ export default function AdminInstruments() {
     }
   }
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-brand-700">Assessment Instruments</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            The paper, marking guide, and time allocation attached to a qualification. Create one manually,
-            or let the AI draft one from a SAQA record or an uploaded QCTO document.
-          </p>
-        </div>
-        <button
-          onClick={() => setShowCreate((v) => !v)}
-          className="rounded bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700 whitespace-nowrap"
-        >
-          {showCreate ? "Close" : "+ New instrument"}
-        </button>
-      </div>
+  const QualSelect = ({ value, onChange, onlyWithSaqa = false }: { value: string; onChange: (v: string) => void; onlyWithSaqa?: boolean }) => (
+    <select className="inp" value={value} onChange={(e) => onChange(e.target.value)} required>
+      <option value="">Select…</option>
+      {qualifications.filter((q) => !onlyWithSaqa || q.saqaQualificationId).map((q) => (
+        <option key={q.id} value={q.id}>{q.title}</option>
+      ))}
+    </select>
+  );
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      {message && <p className="text-sm text-green-700">{message}</p>}
+  const CoverageNotes = ({ notes }: { notes: string | null }) =>
+    notes ? (
+      <div className="mt-4 rounded-lg border border-brand-100 bg-brand-50 p-3.5 text-xs text-ink whitespace-pre-wrap">
+        <p className="font-semibold text-brand-700 mb-1">Coverage notes from the AI</p>
+        {notes}
+      </div>
+    ) : null;
+
+  return (
+    <>
+      <PageHeader
+        title="Assessment Instruments"
+        subtitle="The paper, marking rubric and time allocation attached to a qualification."
+        action={
+          <button className="btn whitespace-nowrap" onClick={() => setShowCreate((v) => !v)}>
+            {showCreate ? "Close" : <><PlusIcon /> New instrument</>}
+          </button>
+        }
+      />
+
+      {error && <Notice kind="error">{error}</Notice>}
+      {message && <Notice kind="success">{message}</Notice>}
 
       {showCreate && (
-        <section className="bg-white rounded-lg shadow p-6">
-          <div className="flex gap-1 border-b border-gray-100 mb-5">
+        <Card className="mb-5">
+          <CardHead title="New instrument" subtitle="Build the paper by hand, or let the AI draft it — the marking rubric is created alongside every question." />
+          <div className="flex gap-1 px-5 pt-3.5 border-b border-line">
             {SOURCE_TABS.map((tab) => (
               <button
                 key={tab.key}
+                type="button"
+                disabled={tab.disabled}
                 onClick={() => setSource(tab.key)}
                 className={
-                  "px-3 py-2 text-sm font-medium border-b-2 -mb-px " +
+                  "px-3.5 py-2.5 -mb-px border-b-2 font-display text-[13px] font-semibold transition " +
                   (source === tab.key
                     ? "border-brand-600 text-brand-700"
-                    : "border-transparent text-gray-400 hover:text-gray-600")
+                    : tab.disabled
+                    ? "border-transparent text-ink-faint/60 cursor-not-allowed"
+                    : "border-transparent text-ink-faint hover:text-ink-muted")
                 }
+                title={tab.disabled ? "Connects once Curricula Builder exposes an API" : undefined}
               >
                 {tab.label}
+                {tab.disabled && <span className="ml-1.5 pill bg-surface-2 text-ink-faint border border-line !text-[10px]">soon</span>}
               </button>
             ))}
           </div>
 
-          {source === "manual" && (
-            <form onSubmit={createInstrument} className="space-y-4">
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs text-gray-500">Qualification</label>
-                  <select
-                    value={instrQualId}
-                    onChange={(e) => setInstrQualId(e.target.value)}
-                    required
-                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  >
-                    <option value="">Select...</option>
-                    {qualifications.map((q) => (
-                      <option key={q.id} value={q.id}>
-                        {q.title}
-                      </option>
-                    ))}
-                  </select>
+          <div className="px-5 pt-4 pb-5">
+            {source === "manual" && (
+              <form onSubmit={createInstrument} className="space-y-4">
+                <div className="grid grid-cols-[2fr_1fr_1fr] gap-3.5">
+                  <div><label className="field-lbl">Qualification</label><QualSelect value={instrQualId} onChange={setInstrQualId} /></div>
+                  <div><label className="field-lbl">Version</label><input className="inp" value={instrVersion} onChange={(e) => setInstrVersion(e.target.value)} required placeholder="e.g. 2026-v1" /></div>
+                  <div><label className="field-lbl">Time (minutes)</label><input className="inp tabular" type="number" min={1} value={instrTime} onChange={(e) => setInstrTime(Number(e.target.value))} required /></div>
                 </div>
-                <div>
-                  <label className="block text-xs text-gray-500">Version</label>
-                  <input
-                    value={instrVersion}
-                    onChange={(e) => setInstrVersion(e.target.value)}
-                    required
-                    placeholder="e.g. 2026-v1"
-                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500">Time allocation (minutes)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={instrTime}
-                    onChange={(e) => setInstrTime(Number(e.target.value))}
-                    required
-                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  />
-                </div>
-              </div>
 
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs text-gray-500">Questions</label>
-                  <button
-                    type="button"
-                    onClick={() => setQuestions((qs) => [...qs, newBlankQuestion()])}
-                    className="text-xs text-brand-600 underline"
-                  >
-                    + Add question
-                  </button>
-                </div>
-                {questions.map((q, idx) => (
-                  <div key={q.id} className="border border-gray-200 rounded p-3 space-y-2">
-                    <div className="flex gap-2 items-start">
-                      <span className="text-xs text-gray-400 pt-2 w-6">Q{idx + 1}</span>
-                      <select
-                        value={q.type}
-                        onChange={(e) => updateQuestion(q.id, { type: e.target.value as QuestionType })}
-                        className="rounded border border-gray-300 px-2 py-1 text-sm"
-                      >
-                        {QUESTION_TYPES.map((t) => (
-                          <option key={t} value={t}>
-                            {t}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="number"
-                        min={0}
-                        value={q.maxMark}
-                        onChange={(e) => updateQuestion(q.id, { maxMark: Number(e.target.value) })}
-                        className="rounded border border-gray-300 px-2 py-1 text-sm w-20"
-                        title="Max mark"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => removeQuestion(q.id)}
-                        className="text-xs text-red-500 ml-auto"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                    <textarea
-                      value={q.prompt}
-                      onChange={(e) => updateQuestion(q.id, { prompt: e.target.value })}
-                      placeholder="Question prompt"
-                      required
-                      className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                      rows={2}
-                    />
-                    {q.type === "mcq" && (
-                      <input
-                        value={(q.options ?? []).join(", ")}
-                        onChange={(e) =>
-                          updateQuestion(q.id, { options: e.target.value.split(",").map((s) => s.trim()) })
-                        }
-                        placeholder="Options, comma-separated"
-                        className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                      />
-                    )}
-                    <textarea
-                      value={q.modelAnswerOrRubric}
-                      onChange={(e) => updateQuestion(q.id, { modelAnswerOrRubric: e.target.value })}
-                      placeholder="Model answer / rubric criteria (never shown to the learner)"
-                      className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-amber-50"
-                      rows={2}
-                    />
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="field-lbl !mb-0">Questions</label>
+                    <button type="button" onClick={() => setQuestions((qs) => [...qs, newBlankQuestion()])} className="lnk">+ Add question</button>
                   </div>
-                ))}
-              </div>
-
-              <button className="rounded bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700">
-                Create instrument
-              </button>
-            </form>
-          )}
-
-          {source === "saqa" && (
-            <>
-              <p className="text-xs text-gray-400 mb-4">
-                Fetches the qualification's Exit Level Outcomes and Associated Assessment Criteria from its
-                public SAQA record and drafts a full paper mapped to them. Requires a SAQA ID set on the
-                Qualifications page first. The result is usable immediately - edit it afterwards like any
-                other instrument if anything needs fixing. This can take a minute or two.
-              </p>
-              <form onSubmit={generateFromSaqa} className="grid grid-cols-3 gap-3 items-end">
-                <div>
-                  <label className="block text-xs text-gray-500">Qualification</label>
-                  <select
-                    value={genQualId}
-                    onChange={(e) => setGenQualId(e.target.value)}
-                    required
-                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  >
-                    <option value="">Select...</option>
-                    {qualifications
-                      .filter((q) => q.saqaQualificationId)
-                      .map((q) => (
-                        <option key={q.id} value={q.id}>
-                          {q.title}
-                        </option>
-                      ))}
-                  </select>
-                  {qualifications.filter((q) => q.saqaQualificationId).length === 0 && (
-                    <p className="text-xs text-amber-600 mt-1">
-                      No qualification has a SAQA ID set yet - add one on the Qualifications page first.
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500">Version</label>
-                  <input
-                    value={genVersion}
-                    onChange={(e) => setGenVersion(e.target.value)}
-                    required
-                    placeholder="e.g. 2026-v1"
-                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500">Time allocation (minutes)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={genTime}
-                    onChange={(e) => setGenTime(Number(e.target.value))}
-                    required
-                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-xs text-gray-500">Permitted materials (comma-separated)</label>
-                  <input
-                    value={genMaterials}
-                    onChange={(e) => setGenMaterials(e.target.value)}
-                    placeholder="e.g. Non-programmable calculator, SANS 10142-1 code book"
-                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <button
-                  disabled={genLoading}
-                  className="rounded bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
-                >
-                  {genLoading ? "Generating..." : "Generate from SAQA"}
-                </button>
-              </form>
-
-              {genCoverageNotes && (
-                <div className="mt-4 bg-brand-50 border border-brand-100 rounded p-3 text-xs text-gray-700 whitespace-pre-wrap">
-                  <p className="font-medium text-brand-700 mb-1">Coverage notes from the AI:</p>
-                  {genCoverageNotes}
-                </div>
-              )}
-            </>
-          )}
-
-          {source === "upload" && (
-            <>
-              <p className="text-xs text-gray-400 mb-4">
-                For a qualification where you have the actual QCTO document (a Qualification Assessment
-                Specifications / External Assessment Specifications document from your AQP — PDF or .docx,
-                not a SCORM package) rather than a SAQA ID. Upload it and the AI identifies the outcomes/
-                assessment criteria in it and drafts a full paper mapped to them, the same as the SAQA path.
-                Usable immediately; edit it afterwards like any other instrument if anything needs fixing.
-              </p>
-              <form onSubmit={generateFromUpload} className="grid grid-cols-3 gap-3 items-end">
-                <div>
-                  <label className="block text-xs text-gray-500">Qualification</label>
-                  <select
-                    value={uploadQualId}
-                    onChange={(e) => setUploadQualId(e.target.value)}
-                    required
-                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  >
-                    <option value="">Select...</option>
-                    {qualifications.map((q) => (
-                      <option key={q.id} value={q.id}>
-                        {q.title}
-                      </option>
+                  <div className="space-y-3">
+                    {questions.map((q, idx) => (
+                      <div key={q.id} className="rounded-lg border border-line p-3.5 space-y-2.5 bg-surface-2/50">
+                        <div className="flex gap-2 items-center">
+                          <span className="font-display font-bold text-xs text-ink-faint w-7">Q{idx + 1}</span>
+                          <select className="inp !w-auto !py-1.5 text-xs" value={q.type} onChange={(e) => updateQuestion(q.id, { type: e.target.value as QuestionType })}>
+                            {QUESTION_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                          </select>
+                          <label className="text-xs text-ink-faint ml-1">Max mark</label>
+                          <input className="inp !w-20 !py-1.5 text-xs tabular" type="number" min={0} value={q.maxMark} onChange={(e) => updateQuestion(q.id, { maxMark: Number(e.target.value) })} />
+                          {questions.length > 1 && (
+                            <button type="button" onClick={() => setQuestions((qs) => qs.filter((x) => x.id !== q.id))} className="ml-auto text-xs text-red-600 hover:underline">Remove</button>
+                          )}
+                        </div>
+                        <textarea className="inp" rows={2} value={q.prompt} onChange={(e) => updateQuestion(q.id, { prompt: e.target.value })} placeholder="Question prompt" required />
+                        {q.type === "mcq" && (
+                          <input className="inp" value={(q.options ?? []).join(", ")} onChange={(e) => updateQuestion(q.id, { options: e.target.value.split(",").map((s) => s.trim()) })} placeholder="Options, comma-separated" />
+                        )}
+                        <textarea className="inp !bg-amber-50/60" rows={2} value={q.modelAnswerOrRubric} onChange={(e) => updateQuestion(q.id, { modelAnswerOrRubric: e.target.value })} placeholder="Model answer / rubric criteria — never shown to the learner" />
+                      </div>
                     ))}
-                  </select>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs text-gray-500">Version</label>
-                  <input
-                    value={uploadVersion}
-                    onChange={(e) => setUploadVersion(e.target.value)}
-                    required
-                    placeholder="e.g. 2026-v1"
-                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500">Time allocation (minutes)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={uploadTime}
-                    onChange={(e) => setUploadTime(Number(e.target.value))}
-                    required
-                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-xs text-gray-500">Permitted materials (comma-separated)</label>
-                  <input
-                    value={uploadMaterials}
-                    onChange={(e) => setUploadMaterials(e.target.value)}
-                    placeholder="e.g. Non-programmable calculator, SANS 10142-1 code book"
-                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500">Document (PDF or .docx)</label>
-                  <input
-                    type="file"
-                    accept=".pdf,.docx,.doc,.txt"
-                    onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
-                    required
-                    className="w-full text-sm"
-                  />
-                </div>
-                <button
-                  disabled={uploadLoading}
-                  className="rounded bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
-                >
-                  {uploadLoading ? "Generating..." : "Generate from document"}
-                </button>
+                <button className="btn">Create instrument</button>
               </form>
+            )}
 
-              {uploadCoverageNotes && (
-                <div className="mt-4 bg-brand-50 border border-brand-100 rounded p-3 text-xs text-gray-700 whitespace-pre-wrap">
-                  <p className="font-medium text-brand-700 mb-1">Coverage notes from the AI:</p>
-                  {uploadCoverageNotes}
-                </div>
-              )}
-            </>
-          )}
-        </section>
+            {source === "saqa" && (
+              <>
+                <p className="text-xs text-ink-muted mb-4 max-w-prose">
+                  Fetches the qualification's Exit Level Outcomes and Assessment Criteria from its public SAQA record and drafts a full paper mapped to them, each question with its rubric. Needs a SAQA ID set on the Qualifications page. Usable immediately; edit afterwards like any other instrument. Takes a minute or two.
+                </p>
+                <form onSubmit={generateFromSaqa} className="grid grid-cols-3 gap-3.5 items-end">
+                  <div>
+                    <label className="field-lbl">Qualification</label>
+                    <QualSelect value={genQualId} onChange={setGenQualId} onlyWithSaqa />
+                    {qualifications.filter((q) => q.saqaQualificationId).length === 0 && (
+                      <p className="text-xs text-amber-700 mt-1.5">No qualification has a SAQA ID yet — set one on the Qualifications page first.</p>
+                    )}
+                  </div>
+                  <div><label className="field-lbl">Version</label><input className="inp" value={genVersion} onChange={(e) => setGenVersion(e.target.value)} required placeholder="e.g. 2026-v1" /></div>
+                  <div><label className="field-lbl">Time (minutes)</label><input className="inp tabular" type="number" min={1} value={genTime} onChange={(e) => setGenTime(Number(e.target.value))} required /></div>
+                  <div className="col-span-2"><label className="field-lbl">Permitted materials <span className="normal-case font-normal text-ink-faint">(comma-separated)</span></label><input className="inp" value={genMaterials} onChange={(e) => setGenMaterials(e.target.value)} placeholder="e.g. Non-programmable calculator, SANS 10142-1 code book" /></div>
+                  <button disabled={genLoading} className="btn">{genLoading ? "Drafting…" : "Draft from SAQA"}</button>
+                </form>
+                <CoverageNotes notes={genCoverageNotes} />
+              </>
+            )}
+
+            {source === "upload" && (
+              <>
+                <p className="text-xs text-ink-muted mb-4 max-w-prose">
+                  For a qualification where you hold the actual QCTO document — the Qualification Assessment Specifications / External Assessment Specifications from your AQP, as PDF or Word. The AI finds the outcomes and assessment criteria in it and drafts a full paper with rubrics, exactly as the SAQA path does.
+                </p>
+                <form onSubmit={generateFromUpload} className="grid grid-cols-3 gap-3.5 items-end">
+                  <div><label className="field-lbl">Qualification</label><QualSelect value={uploadQualId} onChange={setUploadQualId} /></div>
+                  <div><label className="field-lbl">Version</label><input className="inp" value={uploadVersion} onChange={(e) => setUploadVersion(e.target.value)} required placeholder="e.g. 2026-v1" /></div>
+                  <div><label className="field-lbl">Time (minutes)</label><input className="inp tabular" type="number" min={1} value={uploadTime} onChange={(e) => setUploadTime(Number(e.target.value))} required /></div>
+                  <div className="col-span-2"><label className="field-lbl">Permitted materials <span className="normal-case font-normal text-ink-faint">(comma-separated)</span></label><input className="inp" value={uploadMaterials} onChange={(e) => setUploadMaterials(e.target.value)} placeholder="e.g. Non-programmable calculator" /></div>
+                  <div><label className="field-lbl">Document <span className="normal-case font-normal text-ink-faint">(PDF or .docx)</span></label><input type="file" accept=".pdf,.docx,.doc,.txt" onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} required className="block w-full text-sm text-ink-muted file:mr-3 file:rounded-md file:border-0 file:bg-brand-50 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-brand-700" /></div>
+                  <button disabled={uploadLoading} className="btn">{uploadLoading ? "Drafting…" : "Draft from document"}</button>
+                </form>
+                <CoverageNotes notes={uploadCoverageNotes} />
+              </>
+            )}
+          </div>
+        </Card>
       )}
 
-      <section className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-medium mb-4">All instruments</h2>
-        <ul className="text-sm divide-y divide-gray-100">
-          {instruments.map((i) => {
-            const badge = sourceBadge(i.source);
-            return (
-              <li key={i.id} className="py-2.5 flex items-center gap-2">
-                <span className="flex-1">
-                  {qualifications.find((q) => q.id === i.qualificationId)?.title ?? i.qualificationId} —{" "}
-                  {i.version} ({i.questions.length} questions, {i.timeAllocationMinutes}min)
-                </span>
-                <span className={"text-xs rounded-full px-2 py-0.5 " + badge.className}>{badge.label}</span>
-              </li>
-            );
-          })}
-          {instruments.length === 0 && <li className="py-2.5 text-gray-400">None yet.</li>}
-        </ul>
-      </section>
-    </div>
+      <Card>
+        <CardHead title="All instruments" />
+        <div className="px-2 pb-2">
+          {instruments.length ? (
+            <table className="data">
+              <thead>
+                <tr><th>Qualification</th><th>Version</th><th>Questions</th><th>Time</th><th className="text-right">Source</th></tr>
+              </thead>
+              <tbody>
+                {instruments.map((i) => {
+                  const b = sourceBadge(i.source);
+                  return (
+                    <tr key={i.id}>
+                      <td className="font-semibold">{qualifications.find((q) => q.id === i.qualificationId)?.title ?? "—"}</td>
+                      <td>{i.version}</td>
+                      <td>{i.questions.length}</td>
+                      <td>{i.timeAllocationMinutes} min</td>
+                      <td className="text-right"><Badge tone={b.tone}>{b.label}</Badge></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <Empty>No instruments yet — create the first one above.</Empty>
+          )}
+        </div>
+      </Card>
+    </>
   );
 }

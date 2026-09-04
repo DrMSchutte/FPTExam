@@ -10,6 +10,7 @@ import { qualificationsRouter } from "./routes/qualifications.js";
 import { instrumentsRouter } from "./routes/instruments.js";
 import { sittingsRouter } from "./routes/sittings.js";
 import { sessionsRouter } from "./routes/sessions.js";
+import { runMigrations, ensureBootstrapAdmin } from "./db/bootstrap.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -43,6 +44,26 @@ if (process.env.NODE_ENV === "production") {
 }
 
 const port = Number(process.env.PORT ?? 4000);
-app.listen(port, () => {
-  console.log(`FPT Exam API listening on port ${port}`);
-});
+
+// Bring the database up to date and make sure an Administrator exists before
+// accepting traffic. Both steps are idempotent (see db/bootstrap.ts), so a
+// fresh deployment only needs its secrets set - nothing to run by hand.
+async function start() {
+  try {
+    await runMigrations();
+    console.log("Database schema is up to date.");
+    const admin = await ensureBootstrapAdmin();
+    if (admin === "created") console.log(`Bootstrap administrator created: ${process.env.ADMIN_EMAIL}`);
+    else if (admin === "skipped")
+      console.warn("ADMIN_EMAIL / ADMIN_PASSWORD not set - no bootstrap administrator created.");
+  } catch (err) {
+    console.error("Start-up bootstrap failed:", err);
+    process.exit(1);
+  }
+
+  app.listen(port, () => {
+    console.log(`FPT Exam API listening on port ${port}`);
+  });
+}
+
+start();

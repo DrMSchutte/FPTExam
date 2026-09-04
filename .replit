@@ -3,9 +3,15 @@ modules = ["nodejs-20", "postgresql-16"]
 
 # Clicking "Run" in the Replit editor uses this. It mirrors [deployment] below:
 # a full rebuild then a single Express process serving the built client AND
-# the API on one port. Slower per click than a dev server would be, but it's
-# the same one-port setup the workspace is wired for (see README "Production
-# build" section), so there's nothing extra to configure.
+# the API on one port. On start the server also applies any pending database
+# migrations and creates the bootstrap Administrator from the ADMIN_* secrets
+# if none exists (both idempotent) - so a fresh import needs only its secrets
+# set; there are no Shell commands to run.
+#
+# NODE_ENV=production below makes npm skip devDependencies, which is why every
+# build-time tool (typescript, vite, tsx...) lives in *dependencies* in the
+# workspace package.json files. Don't move them back to devDependencies or the
+# build will fail here with "tsc: not found".
 run = "npm run build && npm start"
 
 [nix]

@@ -1,14 +1,22 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
-import type { Qualification } from "@shared/types";
+import type { Qualification, AssessmentInstrument } from "@shared/types";
+import { PageHeader, Card, CardHead, Notice, Pill, Empty, PlusIcon } from "../../components/ui";
 
 export default function AdminQualifications() {
   const [qualifications, setQualifications] = useState<Qualification[]>([]);
+  const [instruments, setInstruments] = useState<AssessmentInstrument[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
 
   async function load() {
-    setQualifications(await api.get<Qualification[]>("/qualifications"));
+    const [q, i] = await Promise.all([
+      api.get<Qualification[]>("/qualifications"),
+      api.get<AssessmentInstrument[]>("/instruments"),
+    ]);
+    setQualifications(q);
+    setInstruments(i);
   }
 
   useEffect(() => {
@@ -31,7 +39,8 @@ export default function AdminQualifications() {
       });
       setQTitle("");
       setQSaqaId("");
-      setMessage("Qualification created.");
+      setMessage("Qualification added.");
+      setShowCreate(false);
       await load();
     } catch (err) {
       setError((err as Error).message);
@@ -47,109 +56,101 @@ export default function AdminQualifications() {
     try {
       await api.patch(`/qualifications/${qualificationId}`, { saqaQualificationId: saqaEditValue });
       setSaqaEditId(null);
-      setMessage("SAQA qualification ID saved.");
+      setMessage("SAQA ID saved.");
       await load();
     } catch (err) {
       setError((err as Error).message);
     }
   }
 
+  const instrumentCount = (qid: string) => instruments.filter((i) => i.qualificationId === qid).length;
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-brand-700">Qualifications</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Register the qualifications you run exams for, and set a SAQA ID where you want to use the
-          "Generate from SAQA" instrument path later on the Instruments page.
-        </p>
-      </div>
-
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      {message && <p className="text-sm text-green-700">{message}</p>}
-
-      <section className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-medium mb-4">Add a qualification</h2>
-        <form onSubmit={createQualification} className="flex flex-wrap gap-3 items-end">
-          <div>
-            <label className="block text-xs text-gray-500">Title</label>
-            <input
-              value={qTitle}
-              onChange={(e) => setQTitle(e.target.value)}
-              required
-              className="rounded border border-gray-300 px-3 py-2 text-sm w-80"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500">QCTO type</label>
-            <select
-              value={qType}
-              onChange={(e) => setQType(e.target.value as "fisa" | "eisa")}
-              className="rounded border border-gray-300 px-3 py-2 text-sm"
-            >
-              <option value="eisa">EISA</option>
-              <option value="fisa">FISA (legacy)</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500">SAQA qualification ID (optional)</label>
-            <input
-              value={qSaqaId}
-              onChange={(e) => setQSaqaId(e.target.value)}
-              placeholder="e.g. 4911"
-              className="rounded border border-gray-300 px-3 py-2 text-sm w-40"
-            />
-          </div>
-          <button className="rounded bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700">
-            Add qualification
+    <>
+      <PageHeader
+        title="Qualifications"
+        subtitle="The registered programmes you run exams for. Set a SAQA ID to unlock AI drafting from the SAQA record."
+        action={
+          <button className="btn whitespace-nowrap" onClick={() => setShowCreate((v) => !v)}>
+            {showCreate ? "Close" : <><PlusIcon /> Add qualification</>}
           </button>
-        </form>
-        <p className="text-xs text-gray-400 mt-3">
-          The SAQA ID is the id= value from that qualification's page on allqs.saqa.org.za.
-        </p>
-      </section>
+        }
+      />
 
-      <section className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-medium mb-4">All qualifications</h2>
-        <ul className="text-sm divide-y divide-gray-100">
-          {qualifications.map((q) => (
-            <li key={q.id} className="py-2.5 flex items-center gap-2">
-              <span className="flex-1">
-                {q.title} <span className="text-gray-400">({q.qctoRegistrationType.toUpperCase()})</span>
-              </span>
-              {saqaEditId === q.id ? (
-                <>
-                  <input
-                    autoFocus
-                    value={saqaEditValue}
-                    onChange={(e) => setSaqaEditValue(e.target.value)}
-                    placeholder="SAQA ID"
-                    className="rounded border border-gray-300 px-2 py-0.5 text-xs w-28"
-                  />
-                  <button onClick={() => saveSaqaId(q.id)} className="text-xs text-brand-600 underline">
-                    Save
-                  </button>
-                  <button onClick={() => setSaqaEditId(null)} className="text-xs text-gray-400 underline">
-                    Cancel
-                  </button>
-                </>
-              ) : q.saqaQualificationId ? (
-                <span className="text-xs text-gray-400">SAQA ID: {q.saqaQualificationId}</span>
-              ) : (
-                <button
-                  onClick={() => {
-                    setSaqaEditId(q.id);
-                    setSaqaEditValue("");
-                  }}
-                  className="text-xs text-brand-600 underline"
-                >
-                  Set SAQA ID
-                </button>
-              )}
-            </li>
-          ))}
-          {qualifications.length === 0 && <li className="py-2.5 text-gray-400">None yet.</li>}
-        </ul>
-      </section>
-    </div>
+      {error && <Notice kind="error">{error}</Notice>}
+      {message && <Notice kind="success">{message}</Notice>}
+
+      {showCreate && (
+        <Card className="mb-5">
+          <CardHead title="Add a qualification" subtitle="The SAQA ID is the id= value from the qualification's page on allqs.saqa.org.za" />
+          <form onSubmit={createQualification} className="grid grid-cols-[2fr_1fr_1fr_auto] gap-3.5 items-end px-5 pt-4 pb-5">
+            <div>
+              <label className="field-lbl">Title</label>
+              <input className="inp" value={qTitle} onChange={(e) => setQTitle(e.target.value)} required placeholder="e.g. Occupational Certificate: Electrician" />
+            </div>
+            <div>
+              <label className="field-lbl">QCTO type</label>
+              <select className="inp" value={qType} onChange={(e) => setQType(e.target.value as "fisa" | "eisa")}>
+                <option value="eisa">EISA</option>
+                <option value="fisa">FISA (legacy)</option>
+              </select>
+            </div>
+            <div>
+              <label className="field-lbl">SAQA ID <span className="normal-case font-normal text-ink-faint">(optional)</span></label>
+              <input className="inp" value={qSaqaId} onChange={(e) => setQSaqaId(e.target.value)} placeholder="e.g. 91234" />
+            </div>
+            <button className="btn">Add</button>
+          </form>
+        </Card>
+      )}
+
+      <Card>
+        <CardHead title="All qualifications" />
+        <div className="px-2 pb-2">
+          {qualifications.length ? (
+            <table className="data">
+              <thead>
+                <tr><th>Qualification</th><th>Type</th><th>SAQA ID</th><th>Instruments</th></tr>
+              </thead>
+              <tbody>
+                {qualifications.map((q) => (
+                  <tr key={q.id}>
+                    <td className="font-semibold">{q.title}</td>
+                    <td><Pill tone={q.qctoRegistrationType}>{q.qctoRegistrationType.toUpperCase()}</Pill></td>
+                    <td>
+                      {saqaEditId === q.id ? (
+                        <span className="flex items-center gap-2">
+                          <input
+                            autoFocus
+                            className="inp !w-28 !py-1 text-xs"
+                            value={saqaEditValue}
+                            onChange={(e) => setSaqaEditValue(e.target.value)}
+                            placeholder="SAQA ID"
+                          />
+                          <button onClick={() => saveSaqaId(q.id)} className="lnk">Save</button>
+                          <button onClick={() => setSaqaEditId(null)} className="text-xs text-ink-faint">Cancel</button>
+                        </span>
+                      ) : q.saqaQualificationId ? (
+                        <span className="tabular">{q.saqaQualificationId}</span>
+                      ) : (
+                        <button
+                          onClick={() => { setSaqaEditId(q.id); setSaqaEditValue(""); }}
+                          className="lnk"
+                        >
+                          Set SAQA ID
+                        </button>
+                      )}
+                    </td>
+                    <td>{instrumentCount(q.id)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <Empty>No qualifications yet — add the first one above.</Empty>
+          )}
+        </div>
+      </Card>
+    </>
   );
 }

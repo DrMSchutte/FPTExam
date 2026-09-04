@@ -1,3 +1,87 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+  body {
+    @apply bg-surface-bg text-ink font-sans antialiased;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  h1, h2, h3 {
+    @apply font-display;
+    text-wrap: balance;
+  }
+  /* Digits line up in tables and stat tiles. */
+  td, .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Keyboard focus is always visible, in brand green. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-600 ring-offset-1;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface border border-line rounded-card shadow-card overflow-hidden;
+  }
+  .card-head {
+    @apply flex items-center justify-between gap-3 px-5 py-4 border-b border-line;
+  }
+  .card-head h2 {
+    @apply text-[15.5px] font-bold tracking-tight;
+  }
+  .card-head p {
+    @apply text-[12.5px] text-ink-faint mt-0.5;
+  }
+  .btn {
+    @apply inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 font-display text-[13.5px] font-semibold text-white shadow-btn transition hover:bg-brand-700 active:translate-y-px disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 rounded-lg border border-line-strong bg-surface px-4 py-2 font-display text-[13.5px] font-semibold text-ink-muted transition hover:bg-surface-2 hover:text-ink;
+  }
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+  .field-lbl {
+    @apply block text-[11px] font-semibold uppercase tracking-wide text-ink-muted mb-1.5;
+  }
+  .inp {
+    @apply w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-brand-600;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11.5px] font-semibold;
+  }
+  .badge::before {
+    content: "";
+    @apply h-1.5 w-1.5 rounded-full bg-current opacity-80;
+  }
+  .badge-plain::before {
+    display: none;
+  }
+  .pill {
+    @apply inline-flex items-center rounded-md px-2.5 py-0.5 text-[11.5px] font-semibold;
+  }
+  .lnk {
+    @apply text-[13px] font-semibold text-blue-600 hover:text-blue-700;
+  }
+  table.data {
+    @apply w-full border-collapse;
+  }
+  table.data thead th {
+    @apply px-3 py-2.5 text-left text-[10.5px] font-semibold uppercase tracking-wider text-ink-faint;
+  }
+  table.data tbody td {
+    @apply px-3 py-3 text-sm border-t border-line;
+  }
+  table.data tbody tr:hover {
+    @apply bg-surface-2;
+  }
+  .t-sub {
+    @apply text-[12.5px] text-ink-faint;
+  }
+}

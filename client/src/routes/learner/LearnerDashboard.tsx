@@ -105,12 +105,12 @@ export default function LearnerDashboard() {
       <div className="max-w-3xl mx-auto p-8 space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-brand-700">Exam paper</h1>
-          <button onClick={backToList} className="text-xs text-gray-500 underline">
+          <button onClick={backToList} className="text-xs text-ink-muted underline">
             ← Back to my sittings
           </button>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-4 text-sm text-gray-600 flex flex-wrap gap-x-6 gap-y-1">
+        <div className="card p-4 text-sm text-ink-muted flex flex-wrap gap-x-6 gap-y-1">
           <span>Time allocation: {paper.timeAllocationMinutes} minutes</span>
           {paper.permittedMaterials.length > 0 && (
             <span>Permitted materials: {paper.permittedMaterials.join(", ")}</span>
@@ -118,9 +118,9 @@ export default function LearnerDashboard() {
         </div>
 
         {submitted ? (
-          <section className="bg-white rounded-lg shadow p-6">
+          <section className="card p-6">
             <h2 className="text-lg font-medium text-green-700">Submitted</h2>
-            <p className="text-sm text-gray-600 mt-2">
+            <p className="text-sm text-ink-muted mt-2">
               Your exam has been submitted. Your Assessor and Moderator will review it and your result will
               be released automatically once both have signed off.
             </p>
@@ -128,7 +128,7 @@ export default function LearnerDashboard() {
         ) : (
           <>
             {error && <p className="text-sm text-red-600">{error}</p>}
-            <p className="text-xs text-gray-400">
+            <p className="text-xs text-ink-faint">
               {saveState === "saving" && "Saving..."}
               {saveState === "saved" && "All answers saved."}
               {saveState === "error" && "Could not save your last answer - check your connection."}
@@ -136,12 +136,12 @@ export default function LearnerDashboard() {
 
             <section className="space-y-4">
               {paper.questions.map((q, idx) => (
-                <div key={q.id} className="bg-white rounded-lg shadow p-6 space-y-3">
+                <div key={q.id} className="card p-6 space-y-3">
                   <div className="flex items-baseline justify-between">
                     <h3 className="font-medium">Question {idx + 1}</h3>
-                    <span className="text-xs text-gray-400">{q.maxMark} marks</span>
+                    <span className="text-xs text-ink-faint">{q.maxMark} marks</span>
                   </div>
-                  <p className="text-sm text-gray-700 whitespace-pre-wrap">{q.prompt}</p>
+                  <p className="text-sm text-ink whitespace-pre-wrap">{q.prompt}</p>
 
                   {q.type === "mcq" && (
                     <div className="space-y-2">
@@ -173,7 +173,7 @@ export default function LearnerDashboard() {
                   {q.type === "practical_upload" && (
                     <div className="space-y-2">
                       <input type="file" disabled className="text-sm" />
-                      <p className="text-xs text-gray-400">
+                      <p className="text-xs text-ink-faint">
                         File upload for practical evidence isn't available in this build yet - use the notes
                         field below in the meantime.
                       </p>
@@ -207,11 +207,11 @@ export default function LearnerDashboard() {
       <h1 className="text-2xl font-semibold text-brand-700">Learner</h1>
       {error && <p className="text-sm text-red-600">{error}</p>}
 
-      <section className="bg-white rounded-lg shadow p-6">
+      <section className="card p-6">
         <h2 className="text-lg font-medium mb-4">My exam sittings</h2>
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-gray-500 border-b">
+            <tr className="text-left text-ink-muted border-b">
               <th className="py-2">Starts</th>
               <th>Ends</th>
               <th>Status</th>
@@ -226,7 +226,7 @@ export default function LearnerDashboard() {
                 <td>{STATUS_LABEL[s.status] ?? s.status}</td>
                 <td className="py-2 text-right">
                   {s.status === "submitted" || s.status === "sealed" ? (
-                    <span className="text-xs text-gray-400">Awaiting sign-off</span>
+                    <span className="text-xs text-ink-faint">Awaiting sign-off</span>
                   ) : (
                     <button
                       onClick={() => openSession(s.sessionId, s.status)}
@@ -240,7 +240,7 @@ export default function LearnerDashboard() {
             ))}
             {sittings.length === 0 && (
               <tr>
-                <td colSpan={4} className="py-4 text-gray-400 text-center">
+                <td colSpan={4} className="py-4 text-ink-faint text-center">
                   No exam sittings assigned yet.
                 </td>
               </tr>

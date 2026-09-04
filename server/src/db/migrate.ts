@@ -1,18 +1,16 @@
-// Runs pending migrations from ./drizzle against DATABASE_URL.
-// Also ensures the pgcrypto extension is present, since the schema relies on
-// gen_random_uuid() for primary keys.
+// Standalone: run pending migrations against DATABASE_URL and exit.
+// The server also does this automatically on start-up (see bootstrap.ts), so
+// this is only needed when you want to migrate without starting the app.
 import "dotenv/config";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { db, pool } from "./index.js";
+import { pool } from "./index.js";
+import { runMigrations } from "./bootstrap.js";
 
-async function main() {
-  await pool.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto";');
-  await migrate(db, { migrationsFolder: "./drizzle" });
-  console.log("Migrations applied successfully.");
-  await pool.end();
-}
-
-main().catch((err) => {
-  console.error("Migration failed:", err);
-  process.exit(1);
-});
+runMigrations()
+  .then(() => {
+    console.log("Migrations applied successfully.");
+    return pool.end();
+  })
+  .catch((err) => {
+    console.error("Migration failed:", err);
+    process.exit(1);
+  });

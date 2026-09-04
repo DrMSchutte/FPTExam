@@ -111,6 +111,8 @@ function publicUser(user: typeof users.$inferSelect, roles: UserRole[]) {
     email: user.email,
     roles,
     employmentRelationship: user.employmentRelationship,
+    source: user.source,
+    fptstaffId: user.fptstaffId,
     createdAt: user.createdAt.toISOString(),
   };
 }

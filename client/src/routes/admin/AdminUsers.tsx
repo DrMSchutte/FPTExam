@@ -1,25 +1,53 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
-import type { PublicUser, UserRole } from "@shared/types";
+import type { PublicUser, UserRole, EmploymentRelationship } from "@shared/types";
+import { PageHeader, Card, CardHead, Notice, Badge, Empty, PlusIcon } from "../../components/ui";
+import type { BadgeTone } from "../../components/ui";
 
-const ROLE_OPTIONS: UserRole[] = [
-  "administrator",
-  "learner",
-  "invigilator",
-  "assessor",
-  "moderator",
-  "head_qa",
+// What the Administrator is registering. Students, assessors and invigilators
+// live in their own sections of FPTStaff, so the type both picks which FPTStaff
+// section to search and pre-fills the role. Administrators are internal FPT
+// Exam accounts created here directly.
+type PersonType = "student" | "assessor" | "invigilator" | "administrator";
+
+const PERSON_TYPES: { key: PersonType; label: string; role: UserRole; fromFptstaff: boolean }[] = [
+  { key: "student", label: "Student", role: "learner", fromFptstaff: true },
+  { key: "assessor", label: "Assessor", role: "assessor", fromFptstaff: true },
+  { key: "invigilator", label: "Invigilator", role: "invigilator", fromFptstaff: true },
+  { key: "administrator", label: "Administrator", role: "administrator", fromFptstaff: false },
 ];
+
+// The four roles FPT Exam has. Moderation and QA live in FPTStaff.
+const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
+  { value: "learner", label: "Learner" },
+  { value: "assessor", label: "Assessor" },
+  { value: "invigilator", label: "Invigilator" },
+  { value: "administrator", label: "Administrator" },
+];
+
+const ROLE_TONE: Record<string, BadgeTone> = {
+  administrator: "green",
+  assessor: "blue",
+  invigilator: "amber",
+  learner: "gray",
+};
+
+// FPTStaff is not connected yet (see the project's moderation-signoff-policy.md).
+// When it is, this flips and the search box below becomes live.
+const FPTSTAFF_CONNECTED = false;
 
 export default function AdminUsers() {
   const [users, setUsers] = useState<PublicUser[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+
+  const [type, setType] = useState<PersonType>("student");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [roles, setRoles] = useState<UserRole[]>([]);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [showCreate, setShowCreate] = useState(false);
+  const [roles, setRoles] = useState<UserRole[]>(["learner"]);
+  const [employment, setEmployment] = useState<EmploymentRelationship | "">("");
 
   async function loadUsers() {
     setUsers(await api.get<PublicUser[]>("/users"));
@@ -28,6 +56,13 @@ export default function AdminUsers() {
   useEffect(() => {
     loadUsers();
   }, []);
+
+  function chooseType(t: PersonType) {
+    setType(t);
+    // The type pre-fills the role; the admin can still adjust it below.
+    setRoles([PERSON_TYPES.find((p) => p.key === t)!.role]);
+    if (t !== "invigilator" && t !== "assessor") setEmployment("");
+  }
 
   function toggleRole(role: UserRole) {
     setRoles((prev) => (prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]));
@@ -38,21 +73,19 @@ export default function AdminUsers() {
     setError(null);
     setMessage(null);
     try {
-      const created = await api.post<{ mfaOtpAuthUrl: string | null }>("/users", {
+      await api.post("/users", {
         name,
         email,
         password,
         roles,
+        employmentRelationship: employment || undefined,
+        source: "manual",
       });
-      setMessage(
-        created.mfaOtpAuthUrl
-          ? "User created. Send them the MFA enrolment link (shown once, here) to scan into an authenticator app."
-          : "User created."
-      );
+      setMessage(`${name} registered.`);
       setName("");
       setEmail("");
       setPassword("");
-      setRoles([]);
+      chooseType(type);
       setShowCreate(false);
       await loadUsers();
     } catch (err) {
@@ -60,93 +93,158 @@ export default function AdminUsers() {
     }
   }
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-brand-700">Users</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Every account other than Learner sign-up is created here — Invigilator, Assessor, Moderator and
-            Head QA accounts all start as a registration, same as this.
-          </p>
-        </div>
-        <button
-          onClick={() => setShowCreate((v) => !v)}
-          className="rounded bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700 whitespace-nowrap"
-        >
-          {showCreate ? "Close" : "+ Register a user"}
-        </button>
-      </div>
+  const current = PERSON_TYPES.find((p) => p.key === type)!;
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      {message && <p className="text-sm text-green-700">{message}</p>}
+  return (
+    <>
+      <PageHeader
+        title="Users"
+        subtitle="Every account on the exam centre. Students, assessors and invigilators are pulled through from FPTStaff once it's connected."
+        action={
+          <button className="btn whitespace-nowrap" onClick={() => setShowCreate((v) => !v)}>
+            {showCreate ? "Close" : <><PlusIcon /> Register a user</>}
+          </button>
+        }
+      />
+
+      {error && <Notice kind="error">{error}</Notice>}
+      {message && <Notice kind="success">{message}</Notice>}
 
       {showCreate && (
-        <section className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-medium mb-4">Register a user</h2>
-          <form onSubmit={handleCreate} className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <input
-                placeholder="Full name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-                className="rounded border border-gray-300 px-3 py-2 text-sm"
-              />
-              <input
-                placeholder="Email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="rounded border border-gray-300 px-3 py-2 text-sm"
-              />
+        <Card className="mb-5">
+          <CardHead title="Register a user" />
+          <form onSubmit={handleCreate} className="px-5 pt-4 pb-5 space-y-5">
+            {/* Step 1 - what are you registering? */}
+            <div>
+              <label className="field-lbl">What are you registering?</label>
+              <div className="inline-flex rounded-lg border border-line-strong p-0.5 bg-surface-2">
+                {PERSON_TYPES.map((p) => (
+                  <button
+                    key={p.key}
+                    type="button"
+                    onClick={() => chooseType(p.key)}
+                    className={
+                      "px-3.5 py-1.5 rounded-md font-display text-[13px] font-semibold transition " +
+                      (type === p.key ? "bg-surface text-brand-700 shadow-card" : "text-ink-muted hover:text-ink")
+                    }
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
             </div>
-            <input
-              placeholder="Temporary password (min 10 chars)"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-            />
-            <div className="flex flex-wrap gap-3">
-              {ROLE_OPTIONS.map((role) => (
-                <label key={role} className="flex items-center gap-1.5 text-sm">
-                  <input type="checkbox" checked={roles.includes(role)} onChange={() => toggleRole(role)} />
-                  {role}
+
+            {/* Step 2 - find them in FPTStaff (live once connected) */}
+            {current.fromFptstaff && (
+              <div>
+                <label className="field-lbl">
+                  Find in FPTStaff <span className="normal-case font-normal text-ink-faint">— {current.label.toLowerCase()}s section</span>
                 </label>
-              ))}
+                <div className="relative">
+                  <input
+                    className="inp pl-9 disabled:bg-surface-2 disabled:text-ink-faint disabled:cursor-not-allowed"
+                    placeholder={FPTSTAFF_CONNECTED ? `Search ${current.label.toLowerCase()}s by name or ID number…` : "Connects once FPTStaff is linked"}
+                    disabled={!FPTSTAFF_CONNECTED}
+                  />
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-faint">
+                    <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
+                  </svg>
+                </div>
+                {!FPTSTAFF_CONNECTED && (
+                  <p className="text-xs text-ink-faint mt-1.5">
+                    Until FPTStaff is connected, add their details below. Anyone added here is pushed across to FPTStaff automatically once the link is live.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Add new / manual details */}
+            <div className="rounded-lg border border-line bg-surface-2/60 p-4 space-y-3.5">
+              <p className="text-[13px] font-semibold text-ink">
+                {current.fromFptstaff ? "Not in FPTStaff yet? Add their details" : "Account details"}
+              </p>
+              <div className="grid grid-cols-2 gap-3.5">
+                <div><label className="field-lbl">Full name</label><input className="inp" value={name} onChange={(e) => setName(e.target.value)} required /></div>
+                <div><label className="field-lbl">Email</label><input className="inp" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="name@fptacademy.co.za" /></div>
+                <div>
+                  <label className="field-lbl">Temporary password <span className="normal-case font-normal text-ink-faint">(min 10 characters)</span></label>
+                  <input className="inp" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={10} />
+                </div>
+                {(type === "invigilator" || type === "assessor") && (
+                  <div>
+                    <label className="field-lbl">Employment</label>
+                    <select className="inp" value={employment} onChange={(e) => setEmployment(e.target.value as EmploymentRelationship | "")}>
+                      <option value="">Not specified</option>
+                      <option value="internal">Internal — FPT staff</option>
+                      <option value="external">External — independent</option>
+                    </select>
+                    {type === "invigilator" && (
+                      <p className="text-xs text-ink-faint mt-1.5">Only external invigilators can be assigned to sittings that require independent invigilation.</p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
-            <button className="rounded bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700">
-              Create user
-            </button>
+
+            {/* Roles - pre-filled from the type, still adjustable */}
+            <div>
+              <label className="field-lbl">Roles <span className="normal-case font-normal text-ink-faint">— pre-filled from the type above; adjust if needed</span></label>
+              <div className="flex flex-wrap gap-2">
+                {ROLE_OPTIONS.map((r) => {
+                  const on = roles.includes(r.value);
+                  return (
+                    <label
+                      key={r.value}
+                      className={"inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-[13.5px] cursor-pointer transition " + (on ? "border-brand-600 bg-brand-50 text-brand-800" : "border-line-strong text-ink-muted hover:bg-surface-2")}
+                    >
+                      <input type="checkbox" className="accent-brand-600" checked={on} onChange={() => toggleRole(r.value)} />
+                      {r.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <button className="btn" disabled={roles.length === 0}>Register {current.label.toLowerCase()}</button>
           </form>
-        </section>
+        </Card>
       )}
 
-      <section className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-medium mb-4">All users</h2>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-gray-500 border-b border-gray-100">
-              <th className="py-2 font-medium">Name</th>
-              <th className="font-medium">Email</th>
-              <th className="font-medium">Roles</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id} className="border-b border-gray-50 last:border-0">
-                <td className="py-2.5">{u.name}</td>
-                <td>{u.email}</td>
-                <td>{u.roles.join(", ")}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {users.length === 0 && <p className="text-gray-400 text-sm mt-2">None yet.</p>}
-      </section>
-    </div>
+      <Card>
+        <CardHead title="All users" subtitle={`${users.length} registered`} />
+        <div className="px-2 pb-2">
+          {users.length ? (
+            <table className="data">
+              <thead>
+                <tr><th>Name</th><th>Email</th><th>Roles</th><th className="text-right">Source</th></tr>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.id}>
+                    <td className="font-semibold">{u.name}</td>
+                    <td className="text-ink-muted">{u.email}</td>
+                    <td>
+                      <span className="flex flex-wrap gap-1.5">
+                        {u.roles.map((r) => (
+                          <Badge key={r} tone={ROLE_TONE[r] ?? "gray"}>
+                            {ROLE_OPTIONS.find((o) => o.value === r)?.label ?? r}
+                            {r === "invigilator" && u.employmentRelationship === "external" && " · External"}
+                          </Badge>
+                        ))}
+                      </span>
+                    </td>
+                    <td className="text-right">
+                      {u.source === "fptstaff" ? <Badge tone="blue">FPTStaff</Badge> : <Badge tone="gray">Added here</Badge>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <Empty>No users yet.</Empty>
+          )}
+        </div>
+      </Card>
+    </>
   );
 }

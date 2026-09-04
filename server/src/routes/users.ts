@@ -10,14 +10,11 @@ import type { UserRole } from "../types.js";
 
 export const usersRouter = Router();
 
-const ROLE_VALUES = [
-  "administrator",
-  "learner",
-  "invigilator",
-  "assessor",
-  "moderator",
-  "head_qa",
-] as const;
+// The four roles FPT Exam actually has. Moderation and QA live in the separate
+// FPTStaff application, so "moderator" / "head_qa" are no longer assignable
+// here (the DB enum still lists them - dropping enum values in Postgres is
+// destructive for no benefit, so they are simply never offered).
+const ROLE_VALUES = ["administrator", "learner", "invigilator", "assessor"] as const;
 
 const createUserSchema = z.object({
   name: z.string().min(1),
@@ -25,6 +22,11 @@ const createUserSchema = z.object({
   password: z.string().min(10, "Password must be at least 10 characters."),
   roles: z.array(z.enum(ROLE_VALUES)).min(1),
   employmentRelationship: z.enum(["internal", "external"]).optional(),
+  // FPTStaff hooks. Until FPTStaff is connected every registration is
+  // "manual"; once it is, a person picked from the FPTStaff dropdown arrives
+  // with source = "fptstaff" and their FPTStaff ID.
+  source: z.enum(["manual", "fptstaff"]).optional(),
+  fptstaffId: z.string().min(1).optional(),
 });
 
 // Only an Administrator can create accounts - there is no public sign-up,
@@ -38,7 +40,7 @@ usersRouter.post(
     if (!parsed.success) {
       return res.status(400).json({ error: "Invalid request body.", detail: parsed.error.message });
     }
-    const { name, email, password, roles, employmentRelationship } = parsed.data;
+    const { name, email, password, roles, employmentRelationship, source, fptstaffId } = parsed.data;
 
     const [existing] = await db.select().from(users).where(eq(users.email, email));
     if (existing) {
@@ -67,6 +69,8 @@ usersRouter.post(
         passwordHash,
         mfaSecret,
         employmentRelationship: employmentRelationship ?? null,
+        source: source ?? "manual",
+        fptstaffId: fptstaffId ?? null,
       })
       .returning();
 
@@ -89,7 +93,7 @@ usersRouter.post(
   }
 );
 
-usersRouter.get("/", requireAuth, requireRole("administrator", "head_qa"), async (_req, res) => {
+usersRouter.get("/", requireAuth, requireRole("administrator"), async (_req, res) => {
   const rows = await db.select().from(users);
   const roleRows = await db.select().from(userRoles);
   const rolesByUser = new Map<string, UserRole[]>();
@@ -106,6 +110,8 @@ usersRouter.get("/", requireAuth, requireRole("administrator", "head_qa"), async
       email: u.email,
       roles: rolesByUser.get(u.id) ?? [],
       employmentRelationship: u.employmentRelationship,
+      source: u.source,
+      fptstaffId: u.fptstaffId,
       createdAt: u.createdAt.toISOString(),
     }))
   );
@@ -120,6 +126,8 @@ usersRouter.get("/me", requireAuth, async (req: AuthedRequest, res) => {
     email: u.email,
     roles: req.auth!.roles,
     employmentRelationship: u.employmentRelationship,
+    source: u.source,
+    fptstaffId: u.fptstaffId,
     createdAt: u.createdAt.toISOString(),
   });
 });

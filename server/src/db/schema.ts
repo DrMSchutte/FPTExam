@@ -24,6 +24,12 @@ export const userRoleEnum = pgEnum("user_role", [
   "head_qa",
 ]);
 
+// Where a person record came from. FPTStaff is the intended system of record
+// for people (see the project's moderation-signoff-policy.md); "manual" covers
+// people registered directly in FPT Exam before that connection exists, or
+// added via "Add new" when they aren't in FPTStaff yet.
+export const userSourceEnum = pgEnum("user_source", ["manual", "fptstaff"]);
+
 export const employmentRelationshipEnum = pgEnum("employment_relationship", [
   "internal",
   "external",
@@ -76,6 +82,11 @@ export const users = pgTable("users", {
   idNumberHash: text("id_number_hash"),
   photoReference: text("photo_reference"),
   employmentRelationship: employmentRelationshipEnum("employment_relationship"),
+  // FPTStaff integration hooks (designed in from the start, active once
+  // FPTStaff can be connected): how this record was created, and the person's
+  // FPTStaff identifier when they were pulled from - or pushed to - FPTStaff.
+  source: userSourceEnum("source").notNull().default("manual"),
+  fptstaffId: text("fptstaff_id").unique(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

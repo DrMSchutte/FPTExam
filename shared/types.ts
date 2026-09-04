@@ -1,6 +1,10 @@
 // Types shared between client and server. Kept dependency-free (no drizzle imports)
 // so the client can import this file without pulling in server-only packages.
 
+// "moderator" and "head_qa" remain in the union only because the database enum
+// still carries them; FPT Exam no longer assigns or routes them - moderation
+// and QA live in the separate FPTStaff application. The four live roles are
+// the first four.
 export type UserRole =
   | "administrator"
   | "learner"
@@ -10,6 +14,10 @@ export type UserRole =
   | "head_qa";
 
 export type EmploymentRelationship = "internal" | "external";
+
+// Where a person record originated - see the project's
+// moderation-signoff-policy.md. FPTStaff is the intended master record.
+export type UserSource = "manual" | "fptstaff";
 
 export type QctoRegistrationType = "fisa" | "eisa";
 
@@ -43,6 +51,8 @@ export interface PublicUser {
   email: string;
   roles: UserRole[];
   employmentRelationship: EmploymentRelationship | null;
+  source: UserSource;
+  fptstaffId: string | null;
   createdAt: string;
 }
 

@@ -6,16 +6,12 @@ import AdminDashboard from "./routes/admin/AdminDashboard";
 import LearnerDashboard from "./routes/learner/LearnerDashboard";
 import InvigilatorDashboard from "./routes/invigilator/InvigilatorDashboard";
 import AssessorDashboard from "./routes/assessor/AssessorDashboard";
-import ModeratorDashboard from "./routes/moderator/ModeratorDashboard";
-import HeadQADashboard from "./routes/headqa/HeadQADashboard";
 
 const HOME_BY_ROLE: Record<string, string> = {
   administrator: "/admin",
   learner: "/learner",
   invigilator: "/invigilator",
   assessor: "/assessor",
-  moderator: "/moderator",
-  head_qa: "/headqa",
 };
 
 function Home() {
@@ -71,22 +67,6 @@ export default function App() {
         element={
           <ProtectedRoute allow={["assessor"]}>
             <AssessorDashboard />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/moderator/*"
-        element={
-          <ProtectedRoute allow={["moderator"]}>
-            <ModeratorDashboard />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/headqa/*"
-        element={
-          <ProtectedRoute allow={["head_qa"]}>
-            <HeadQADashboard />
           </ProtectedRoute>
         }
       />

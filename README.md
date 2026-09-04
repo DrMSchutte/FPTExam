@@ -2,21 +2,22 @@
 
 FPT Academy's secure online exam centre.
 
-Phase 1 scaffold: repo structure, full database schema, and authentication
-(login, MFA, RBAC) for the proctored exam platform described in
-`docs/exam-centre-spec.md` and `docs/exam-centre-build-brief.md`.
+The proctored FISA/EISA exam platform described in `docs/exam-centre-spec.md`
+and `docs/exam-centre-build-brief.md`. Where those two documents and the
+project's `moderation-signoff-policy.md` / `build-roadmap.md` disagree, the
+latter two are current.
 
-**What's implemented:** Administrator-only user registration (with the
-Invigilator/Assessor role-independence rule enforced), login, TOTP-based MFA,
-JWT sessions, RBAC middleware, the full 17-table schema for the whole
-platform (not just auth), and a minimal React client with role-routed
-dashboards (Administrator's is functional — create/list users; the other five
-are placeholders proving the login → RBAC → routing loop end to end).
+**Built so far (Phases A and B):** login with MFA and role-based access; the
+Administrator area (qualifications, assessment instruments via manual entry /
+AI-from-SAQA / AI-from-uploaded-QCTO-document, exam sittings, learner
+assignment, user registration with the FPTStaff pull-through designed in); the
+Learner exam-taking flow (start → answer → autosave → submit). Four roles:
+Administrator, Learner, Assessor, Invigilator - moderation and QA live in the
+separate FPTStaff application.
 
-**Not yet implemented** (see the build brief's phased list): qualification /
-instrument intake, exam sitting setup, the learner exam-taking UI, proctoring
-capture, recording/storage, the two AI engines, and the moderation/release
-workflow.
+**Next (Phase C onward):** the Assessor marking screen and AI marking/gap
+engine, then proctoring, then switching on the FPTStaff and Curricula Builder
+integrations. See `build-roadmap.md` in the project for the full phase plan.
 
 ## Running locally
 
@@ -72,26 +73,23 @@ wired up as of Phase 5).
 
 ### Getting this onto Replit
 
-1. Go to [replit.com/import](https://replit.com/import), sign in (or create
-   an account), choose **ZIP**, and upload this project's zip file.
-2. Once the import finishes, open the **Secrets** tool (in the left-hand
-   tool dock) and add each of the non-empty values from
-   `server/.env.example` as a Secret — `JWT_SECRET`, `APP_BASE_URL`,
-   `ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `ANTHROPIC_API_KEY`.
-   Set `APP_BASE_URL` to the `https://...replit.dev` (or `.replit.app`)
-   address Replit gives this Repl. Leave `DATABASE_URL` alone if Replit's
-   Database tool already set one for you; otherwise add it there too.
-3. Open the **Shell** tool and run once:
-   ```bash
-   npm run db:migrate
-   npm run db:seed
-   ```
-4. Click **Run**. First run rebuilds the client and server, so it takes a
-   minute; after that, open the app at the address Replit shows.
+1. Go to [replit.com/import](https://replit.com/import), choose **ZIP**, and
+   upload this project's zip file. If Replit's Agent asks what to do with the
+   import, choose **"Get it running on Replit"**.
+2. Open the **Secrets** tool and add: `JWT_SECRET`, `ADMIN_NAME`,
+   `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ANTHROPIC_API_KEY` (and `APP_BASE_URL`
+   once you have a final domain). `DATABASE_URL` is normally set for you by
+   Replit's built-in Postgres; add it only if it's missing.
+3. Click **Run**. That's it - on start the server applies the database
+   migrations and creates the Administrator from the `ADMIN_*` secrets
+   automatically, so there are no Shell commands to run. Log in with
+   `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
+
+If you ever change `ADMIN_PASSWORD` *after* the account exists, the start-up
+step deliberately won't overwrite a live credential - run
+`npm run db:reset-admin-password` in the Shell once to apply the new value.
 
 ## Next steps
 
-Follow the phased build order in `docs/exam-centre-build-brief.md` (Section
-7): qualification/instrument intake next, then exam sitting setup and the
-learner exam-taking UI, before layering on proctoring capture and the AI
-engines.
+See `build-roadmap.md` (project) - Phase C (Assessor marking & the AI
+Response-Review engine) is next, then Phase D (proctoring & invigilation).

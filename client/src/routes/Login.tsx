@@ -52,64 +52,65 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-brand-50">
-      <div className="w-full max-w-sm bg-white rounded-lg shadow p-8">
-        <h1 className="text-xl font-semibold text-brand-700 mb-1">FPT Exam</h1>
-        <p className="text-sm text-gray-500 mb-6">Secure Online Exam Centre</p>
+    <div className="min-h-screen flex items-center justify-center bg-surface-bg px-4">
+      <div className="w-full max-w-[400px]">
+        <div className="flex items-center gap-3 mb-6">
+          <div
+            className="h-10 w-10 shrink-0 rounded-[10px] grid place-items-center text-white font-display font-extrabold text-lg shadow-btn"
+            style={{ background: "linear-gradient(145deg, #6BBF3E 0%, #4C9127 100%)" }}
+          >
+            F
+          </div>
+          <div>
+            <p className="font-display font-extrabold text-lg leading-tight tracking-tight">FPT Exam</p>
+            <p className="text-xs text-ink-faint">Secure Exam Centre</p>
+          </div>
+        </div>
 
-        {!pendingToken ? (
-          <form onSubmit={handlePasswordSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Email</label>
+        <div className="card p-7">
+          {!pendingToken ? (
+            <form onSubmit={handlePasswordSubmit} className="space-y-4">
+              <div>
+                <h1 className="text-[19px] font-bold tracking-tight">Sign in</h1>
+                <p className="text-[13.5px] text-ink-muted mt-0.5">Use the email and password you were registered with.</p>
+              </div>
+              <div>
+                <label className="field-lbl">Email</label>
+                <input className="inp" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+              </div>
+              <div>
+                <label className="field-lbl">Password</label>
+                <input className="inp" type="password" required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+              </div>
+              {error && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+              <button type="submit" disabled={busy} className="btn w-full justify-center !py-2.5">
+                {busy ? "Signing in…" : "Sign in"}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleMfaSubmit} className="space-y-4">
+              <div>
+                <h1 className="text-[19px] font-bold tracking-tight">Two-step verification</h1>
+                <p className="text-[13.5px] text-ink-muted mt-0.5">Enter the 6-digit code from your authenticator app.</p>
+              </div>
               <input
-                type="email"
+                className="inp text-center tracking-[0.4em] font-display text-lg tabular"
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
                 required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                autoFocus
+                value={mfaToken}
+                onChange={(e) => setMfaToken(e.target.value)}
               />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Password</label>
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-              />
-            </div>
-            {error && <p className="text-sm text-red-600">{error}</p>}
-            <button
-              type="submit"
-              disabled={busy}
-              className="w-full rounded bg-brand-600 text-white py-2 text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
-            >
-              {busy ? "Signing in..." : "Sign in"}
-            </button>
-          </form>
-        ) : (
-          <form onSubmit={handleMfaSubmit} className="space-y-4">
-            <p className="text-sm text-gray-600">Enter the 6-digit code from your authenticator app.</p>
-            <input
-              type="text"
-              inputMode="numeric"
-              maxLength={6}
-              required
-              value={mfaToken}
-              onChange={(e) => setMfaToken(e.target.value)}
-              className="w-full rounded border border-gray-300 px-3 py-2 text-sm tracking-widest text-center"
-            />
-            {error && <p className="text-sm text-red-600">{error}</p>}
-            <button
-              type="submit"
-              disabled={busy}
-              className="w-full rounded bg-brand-600 text-white py-2 text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
-            >
-              {busy ? "Verifying..." : "Verify"}
-            </button>
-          </form>
-        )}
+              {error && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+              <button type="submit" disabled={busy} className="btn w-full justify-center !py-2.5">
+                {busy ? "Verifying…" : "Verify"}
+              </button>
+            </form>
+          )}
+        </div>
+        <p className="text-center text-xs text-ink-faint mt-5">© {new Date().getFullYear()} FPT Academy. All rights reserved.</p>
       </div>
     </div>
   );

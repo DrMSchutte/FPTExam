@@ -47,7 +47,7 @@ qualificationsRouter.post(
 qualificationsRouter.get(
   "/",
   requireAuth,
-  requireRole("administrator", "assessor", "moderator", "head_qa"),
+  requireRole("administrator", "assessor"),
   async (_req, res) => {
     const rows = await db.select().from(qualifications);
     return res.json(rows);
