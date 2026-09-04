@@ -1,19 +1,6 @@
 entrypoint = "server/src/index.ts"
 modules = ["nodejs-20", "postgresql-16"]
 
-# Clicking "Run" in the Replit editor uses this. It mirrors [deployment] below:
-# a full rebuild then a single Express process serving the built client AND
-# the API on one port. On start the server also applies any pending database
-# migrations and creates the bootstrap Administrator from the ADMIN_* secrets
-# if none exists (both idempotent) - so a fresh import needs only its secrets
-# set; there are no Shell commands to run.
-#
-# NODE_ENV=production below makes npm skip devDependencies, which is why every
-# build-time tool (typescript, vite, tsx...) lives in *dependencies* in the
-# workspace package.json files. Don't move them back to devDependencies or the
-# build will fail here with "tsc: not found".
-run = "npm run build && npm start"
-
 [nix]
 channel = "stable-24_05"
 
@@ -22,8 +9,37 @@ build = ["npm", "run", "build"]
 run = ["npm", "run", "start"]
 
 [[ports]]
-localPort = 4000
+localPort = 5000
 externalPort = 80
 
 [env]
 NODE_ENV = "production"
+
+[userenv]
+
+[userenv.shared]
+PORT = "5000"
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run build && npm start"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
