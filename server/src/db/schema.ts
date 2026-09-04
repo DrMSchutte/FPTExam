@@ -352,5 +352,10 @@ export const backgroundJobs = pgTable("background_jobs", {
   status: text("status").notNull().default("pending"),
   attempts: integer("attempts").notNull().default(0),
   runAfter: timestamp("run_after", { withTimezone: true }).notNull().defaultNow(),
+  // Outcome of a finished job - e.g. { instrumentId, coverageNotes } for
+  // instrument generation, or { error, detail } when status = 'failed'. Lets
+  // a client poll for a long-running job's result instead of holding one
+  // request open past Replit's ~60s gateway timeout.
+  result: jsonb("result"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

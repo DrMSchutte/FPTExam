@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../../lib/api";
+import { api, pollJob } from "../../lib/api";
 import type { Qualification, AssessmentInstrument, Question, QuestionType } from "@shared/types";
 import { PageHeader, Card, CardHead, Notice, Badge, Empty, PlusIcon } from "../../components/ui";
 import type { BadgeTone } from "../../components/ui";
@@ -114,14 +114,17 @@ export default function AdminInstruments() {
     setGenCoverageNotes(null);
     setGenLoading(true);
     try {
-      const created = await api.post<AssessmentInstrument & { coverageNotes: string }>("/instruments/generate", {
+      const { jobId } = await api.post<{ jobId: string }>("/instruments/generate", {
         qualificationId: genQualId,
         version: genVersion,
         timeAllocationMinutes: Number(genTime),
         permittedMaterials: genMaterials ? genMaterials.split(",").map((s) => s.trim()).filter(Boolean) : [],
       });
-      setMessage(`Instrument drafted from SAQA (${created.questions.length} questions).`);
-      setGenCoverageNotes(created.coverageNotes);
+      const done = await pollJob<{ instrument: AssessmentInstrument; coverageNotes: string; questionCount: number }>(
+        `/instruments/jobs/${jobId}`
+      );
+      setMessage(`Instrument drafted from SAQA (${done.questionCount} questions).`);
+      setGenCoverageNotes(done.coverageNotes);
       setGenVersion("");
       await loadAll();
     } catch (err) {
@@ -157,12 +160,12 @@ export default function AdminInstruments() {
       form.append("version", uploadVersion);
       form.append("timeAllocationMinutes", String(uploadTime));
       if (uploadMaterials) form.append("permittedMaterials", uploadMaterials);
-      const created = await api.postForm<AssessmentInstrument & { coverageNotes: string }>(
-        "/instruments/generate-from-upload",
-        form
+      const { jobId } = await api.postForm<{ jobId: string }>("/instruments/generate-from-upload", form);
+      const done = await pollJob<{ instrument: AssessmentInstrument; coverageNotes: string; questionCount: number }>(
+        `/instruments/jobs/${jobId}`
       );
-      setMessage(`Instrument drafted from the uploaded document (${created.questions.length} questions).`);
-      setUploadCoverageNotes(created.coverageNotes);
+      setMessage(`Instrument drafted from the uploaded document (${done.questionCount} questions).`);
+      setUploadCoverageNotes(done.coverageNotes);
       setUploadVersion("");
       setUploadFile(null);
       await loadAll();
@@ -288,7 +291,7 @@ export default function AdminInstruments() {
                   <div><label className="field-lbl">Version</label><input className="inp" value={genVersion} onChange={(e) => setGenVersion(e.target.value)} required placeholder="e.g. 2026-v1" /></div>
                   <div><label className="field-lbl">Time (minutes)</label><input className="inp tabular" type="number" min={1} value={genTime} onChange={(e) => setGenTime(Number(e.target.value))} required /></div>
                   <div className="col-span-2"><label className="field-lbl">Permitted materials <span className="normal-case font-normal text-ink-faint">(comma-separated)</span></label><input className="inp" value={genMaterials} onChange={(e) => setGenMaterials(e.target.value)} placeholder="e.g. Non-programmable calculator, SANS 10142-1 code book" /></div>
-                  <button disabled={genLoading} className="btn">{genLoading ? "Drafting…" : "Draft from SAQA"}</button>
+                  <button disabled={genLoading} className="btn">{genLoading ? "Drafting — usually 1–2 minutes…" : "Draft from SAQA"}</button>
                 </form>
                 <CoverageNotes notes={genCoverageNotes} />
               </>
@@ -305,7 +308,7 @@ export default function AdminInstruments() {
                   <div><label className="field-lbl">Time (minutes)</label><input className="inp tabular" type="number" min={1} value={uploadTime} onChange={(e) => setUploadTime(Number(e.target.value))} required /></div>
                   <div className="col-span-2"><label className="field-lbl">Permitted materials <span className="normal-case font-normal text-ink-faint">(comma-separated)</span></label><input className="inp" value={uploadMaterials} onChange={(e) => setUploadMaterials(e.target.value)} placeholder="e.g. Non-programmable calculator" /></div>
                   <div><label className="field-lbl">Document <span className="normal-case font-normal text-ink-faint">(PDF or .docx)</span></label><input type="file" accept=".pdf,.docx,.doc,.txt" onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} required className="block w-full text-sm text-ink-muted file:mr-3 file:rounded-md file:border-0 file:bg-brand-50 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-brand-700" /></div>
-                  <button disabled={uploadLoading} className="btn">{uploadLoading ? "Drafting…" : "Draft from document"}</button>
+                  <button disabled={uploadLoading} className="btn">{uploadLoading ? "Drafting — usually 1–2 minutes…" : "Draft from document"}</button>
                 </form>
                 <CoverageNotes notes={uploadCoverageNotes} />
               </>

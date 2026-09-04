@@ -8,6 +8,7 @@ import {
   qualifications,
   saqaQualificationExtracts,
   qctoDocumentExtracts,
+  backgroundJobs,
 } from "../db/schema.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
 import { fetchSaqaExtract, SaqaExtractError } from "../integrations/saqa/fetchQualification.js";
@@ -30,6 +31,76 @@ const upload = multer({
 });
 
 export const instrumentsRouter = Router();
+
+// ---------------------------------------------------------------------------
+// Long-running generation runs as a background job, not inside the request.
+//
+// Drafting a paper takes the AI one to two minutes. Replit's gateway (and most
+// reverse proxies) cut a request off at roughly 60s and hand the browser a
+// bare 502 - which is exactly what happened on the first live attempt. So the
+// generate endpoints now validate, create a `background_jobs` row, start the
+// work, and return 202 with the job id immediately; the client polls
+// GET /instruments/jobs/:id until it's done or failed. The job row's `result`
+// carries either { instrumentId, questionCount, coverageNotes } or
+// { error, detail }, so failures are as explicit as they were before.
+// ---------------------------------------------------------------------------
+
+type JobOutcome =
+  | { instrumentId: string; questionCount: number; coverageNotes: string }
+  | { error: string; detail: string };
+
+async function startJob(jobType: string, payload: Record<string, unknown>): Promise<string> {
+  const [job] = await db
+    .insert(backgroundJobs)
+    .values({ jobType, payload, status: "running", attempts: 1 })
+    .returning();
+  return job.id;
+}
+
+async function finishJob(jobId: string, outcome: JobOutcome): Promise<void> {
+  await db
+    .update(backgroundJobs)
+    .set({ status: "error" in outcome ? "failed" : "done", result: outcome })
+    .where(eq(backgroundJobs.id, jobId));
+}
+
+// Fire-and-forget wrapper: whatever the work throws becomes a failed job with
+// a readable reason rather than an unhandled rejection.
+function runInBackground(jobId: string, work: () => Promise<JobOutcome>): void {
+  work()
+    .then((outcome) => finishJob(jobId, outcome))
+    .catch((err) =>
+      finishJob(jobId, {
+        error: "Instrument generation failed unexpectedly.",
+        detail: err instanceof Error ? err.message : String(err),
+      })
+    )
+    .catch((err) => console.error(`Could not record outcome for job ${jobId}:`, err));
+}
+
+// Poll endpoint for a generation job. Returns the instrument itself once done,
+// so the client needs nothing further.
+instrumentsRouter.get(
+  "/jobs/:id",
+  requireAuth,
+  requireRole("administrator"),
+  async (req: AuthedRequest, res) => {
+    const [job] = await db.select().from(backgroundJobs).where(eq(backgroundJobs.id, req.params.id));
+    if (!job) return res.status(404).json({ error: "Job not found." });
+    const result = (job.result ?? null) as JobOutcome | null;
+    if (job.status === "done" && result && "instrumentId" in result) {
+      const [instrument] = await db
+        .select()
+        .from(assessmentInstruments)
+        .where(eq(assessmentInstruments.id, result.instrumentId));
+      return res.json({ status: "done", instrument, coverageNotes: result.coverageNotes, questionCount: result.questionCount });
+    }
+    if (job.status === "failed" && result && "error" in result) {
+      return res.json({ status: "failed", error: result.error, detail: result.detail });
+    }
+    return res.json({ status: job.status });
+  }
+);
 
 // Mirrors the AssessmentInstrument import contract in the build brief
 // (Section 5) so a future "Fetch from Curricula Builder" action can populate
@@ -176,59 +247,72 @@ instrumentsRouter.post(
       });
     }
 
-    let extract;
-    try {
-      extract = await fetchSaqaExtract(qualification.saqaQualificationId);
-    } catch (err) {
-      if (err instanceof SaqaExtractError) {
-        return res.status(502).json({ error: "Could not extract data from SAQA.", detail: err.message });
+    const saqaId = qualification.saqaQualificationId;
+    const jobId = await startJob("ai_instrument_generation", {
+      path: "saqa",
+      qualificationId,
+      saqaQualificationId: saqaId,
+      version,
+      timeAllocationMinutes,
+    });
+
+    runInBackground(jobId, async () => {
+      let extract;
+      try {
+        extract = await fetchSaqaExtract(saqaId);
+      } catch (err) {
+        if (err instanceof SaqaExtractError) {
+          return { error: "Could not extract data from SAQA.", detail: err.message };
+        }
+        throw err;
       }
-      throw err;
-    }
 
-    const [extractRow] = await db
-      .insert(saqaQualificationExtracts)
-      .values({
-        qualificationId,
-        saqaQualificationId: qualification.saqaQualificationId,
-        exitLevelOutcomes: extract.exitLevelOutcomes,
-        assessmentCriteria: extract.assessmentCriteria,
-        sourceUrl: extract.sourceUrl,
-      })
-      .returning();
+      const [extractRow] = await db
+        .insert(saqaQualificationExtracts)
+        .values({
+          qualificationId,
+          saqaQualificationId: saqaId,
+          exitLevelOutcomes: extract.exitLevelOutcomes,
+          assessmentCriteria: extract.assessmentCriteria,
+          sourceUrl: extract.sourceUrl,
+        })
+        .returning();
 
-    let generated;
-    try {
-      generated = await generateInstrumentFromSaqa({
-        qualificationTitle: qualification.title,
-        qctoRegistrationType: qualification.qctoRegistrationType,
-        exitLevelOutcomes: extract.exitLevelOutcomes,
-        assessmentCriteria: extract.assessmentCriteria,
-        timeAllocationMinutes,
-        permittedMaterials: permittedMaterials ?? [],
-      });
-    } catch (err) {
-      return res.status(502).json({
-        error: "The AI could not draft an instrument from this SAQA data.",
-        detail: err instanceof Error ? err.message : String(err),
-      });
-    }
+      let generated;
+      try {
+        generated = await generateInstrumentFromSaqa({
+          qualificationTitle: qualification.title,
+          qctoRegistrationType: qualification.qctoRegistrationType,
+          exitLevelOutcomes: extract.exitLevelOutcomes,
+          assessmentCriteria: extract.assessmentCriteria,
+          timeAllocationMinutes,
+          permittedMaterials: permittedMaterials ?? [],
+        });
+      } catch (err) {
+        return {
+          error: "The AI could not draft an instrument from this SAQA data.",
+          detail: err instanceof Error ? err.message : String(err),
+        };
+      }
 
-    const [created] = await db
-      .insert(assessmentInstruments)
-      .values({
-        qualificationId,
-        version,
-        questions: generated.questions,
-        timeAllocationMinutes,
-        permittedMaterials: permittedMaterials ?? [],
-        passMarkOrCompetencyRule: { rule: generated.passMarkOrCompetencyRule },
-        source: "ai_generated",
-        saqaExtractId: extractRow.id,
-      })
-      .returning();
+      const [created] = await db
+        .insert(assessmentInstruments)
+        .values({
+          qualificationId,
+          version,
+          questions: generated.questions,
+          timeAllocationMinutes,
+          permittedMaterials: permittedMaterials ?? [],
+          passMarkOrCompetencyRule: { rule: generated.passMarkOrCompetencyRule },
+          source: "ai_generated",
+          saqaExtractId: extractRow.id,
+        })
+        .returning();
 
-    return res.status(201).json({ ...created, coverageNotes: generated.coverageNotes });
+      return { instrumentId: created.id, questionCount: generated.questions.length, coverageNotes: generated.coverageNotes };
+    });
+
+    return res.status(202).json({ jobId });
   }
 );
 
@@ -291,61 +375,74 @@ instrumentsRouter.post(
       throw err;
     }
 
-    let extracted;
-    try {
-      extracted = await extractOutcomesFromDocumentText(rawText, qualification.title);
-    } catch (err) {
-      if (err instanceof DocumentOutcomeExtractionError) {
-        return res.status(502).json({
-          error: "Could not identify outcomes/assessment criteria in the uploaded document.",
-          detail: err.message,
-        });
+    const originalFilename = req.file.originalname;
+    const jobId = await startJob("ai_instrument_generation", {
+      path: "upload",
+      qualificationId,
+      originalFilename,
+      version,
+      timeAllocationMinutes,
+    });
+
+    runInBackground(jobId, async () => {
+      let extracted;
+      try {
+        extracted = await extractOutcomesFromDocumentText(rawText, qualification.title);
+      } catch (err) {
+        if (err instanceof DocumentOutcomeExtractionError) {
+          return {
+            error: "Could not identify outcomes/assessment criteria in the uploaded document.",
+            detail: err.message,
+          };
+        }
+        throw err;
       }
-      throw err;
-    }
 
-    const [extractRow] = await db
-      .insert(qctoDocumentExtracts)
-      .values({
-        qualificationId,
-        originalFilename: req.file.originalname,
-        exitLevelOutcomes: extracted.exitLevelOutcomes,
-        assessmentCriteria: extracted.assessmentCriteria,
-      })
-      .returning();
+      const [extractRow] = await db
+        .insert(qctoDocumentExtracts)
+        .values({
+          qualificationId,
+          originalFilename,
+          exitLevelOutcomes: extracted.exitLevelOutcomes,
+          assessmentCriteria: extracted.assessmentCriteria,
+        })
+        .returning();
 
-    let generated;
-    try {
-      generated = await generateInstrumentFromOutcomes({
-        qualificationTitle: qualification.title,
-        qctoRegistrationType: qualification.qctoRegistrationType,
-        exitLevelOutcomes: extracted.exitLevelOutcomes,
-        assessmentCriteria: extracted.assessmentCriteria,
-        timeAllocationMinutes,
-        permittedMaterials,
-        sourceDescription: `as extracted from the uploaded document "${req.file.originalname}"`,
-      });
-    } catch (err) {
-      return res.status(502).json({
-        error: "The AI could not draft an instrument from this document.",
-        detail: err instanceof Error ? err.message : String(err),
-      });
-    }
+      let generated;
+      try {
+        generated = await generateInstrumentFromOutcomes({
+          qualificationTitle: qualification.title,
+          qctoRegistrationType: qualification.qctoRegistrationType,
+          exitLevelOutcomes: extracted.exitLevelOutcomes,
+          assessmentCriteria: extracted.assessmentCriteria,
+          timeAllocationMinutes,
+          permittedMaterials,
+          sourceDescription: `as extracted from the uploaded document "${originalFilename}"`,
+        });
+      } catch (err) {
+        return {
+          error: "The AI could not draft an instrument from this document.",
+          detail: err instanceof Error ? err.message : String(err),
+        };
+      }
 
-    const [created] = await db
-      .insert(assessmentInstruments)
-      .values({
-        qualificationId,
-        version,
-        questions: generated.questions,
-        timeAllocationMinutes,
-        permittedMaterials,
-        passMarkOrCompetencyRule: { rule: generated.passMarkOrCompetencyRule },
-        source: "qcto_upload",
-        qctoExtractId: extractRow.id,
-      })
-      .returning();
+      const [created] = await db
+        .insert(assessmentInstruments)
+        .values({
+          qualificationId,
+          version,
+          questions: generated.questions,
+          timeAllocationMinutes,
+          permittedMaterials,
+          passMarkOrCompetencyRule: { rule: generated.passMarkOrCompetencyRule },
+          source: "qcto_upload",
+          qctoExtractId: extractRow.id,
+        })
+        .returning();
 
-    return res.status(201).json({ ...created, coverageNotes: generated.coverageNotes });
+      return { instrumentId: created.id, questionCount: generated.questions.length, coverageNotes: generated.coverageNotes };
+    });
+
+    return res.status(202).json({ jobId });
   }
 );

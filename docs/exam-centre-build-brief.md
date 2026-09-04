@@ -276,7 +276,7 @@ All routes under `/api`. Every route enforces RBAC middleware. Only four roles e
 - `GET /users`, `GET /users/me`, `PATCH /users/:id`
 - `GET /fptstaff/people?type=student|assessor|invigilator&q=` — **Phase E**: the registration dropdown's search against FPTStaff's matching section (Section 5.9)
 - `POST /qualifications`, `PATCH /qualifications/:id`
-- `POST /instruments` (manual), `PATCH /instruments/:id`, `POST /instruments/generate` (AI-from-SAQA, 5.6), `POST /instruments/generate-from-upload` (AI-from-QCTO-document, 5.7; multipart, field `document`), `POST /instruments/import` (**Phase F**, Curricula Builder)
+- `POST /instruments` (manual), `PATCH /instruments/:id`, `POST /instruments/generate` (AI-from-SAQA, 5.6) and `POST /instruments/generate-from-upload` (AI-from-QCTO-document, 5.7; multipart, field `document`) — both return **202 `{ jobId }`**; `GET /instruments/jobs/:id` polls the job (Section 5.4); `POST /instruments/import` (**Phase F**, Curricula Builder)
 - `POST /sittings`, `PATCH /sittings/:id`, `POST /sittings/:id/assign-learners`
 - `GET /audit-log`
 
@@ -313,7 +313,7 @@ On session start: request camera + screen permissions once; run a `setInterval` 
 On `POST /sessions/:id/submit`: mark the session `sealed`, compute a SHA-256 over the ordered list of that session's `capture_events` hashes, store it on the session row, and reject any further captures for the session.
 
 **5.4 AI job triggers**
-On submit/seal, insert a `background_jobs` row `ai_response_review` (Phase C) and, once proctoring exists, `ai_integrity` (Phase D), each with `payload = { session_id }`. A worker polls `status = 'pending' AND run_after <= now()`, marks `running`, calls the engine (Section 6), writes the result row, marks `done` (or `failed` with backoff). On sign-off, `fptstaff_push` is enqueued the same way (5.1). Instrument generation (5.6/5.7) stays synchronous — an Administrator is waiting on it.
+On submit/seal, insert a `background_jobs` row `ai_response_review` (Phase C) and, once proctoring exists, `ai_integrity` (Phase D), each with `payload = { session_id }`. A worker polls `status = 'pending' AND run_after <= now()`, marks `running`, calls the engine (Section 6), writes the result row, marks `done` (or `failed` with backoff). On sign-off, `fptstaff_push` is enqueued the same way (5.1). Instrument generation (5.6/5.7) also runs as a job: `POST /instruments/generate` and `/generate-from-upload` validate, create a `background_jobs` row (`ai_instrument_generation`, status `running`), start the work in-process, and return **202 `{ jobId }`** immediately; the client polls `GET /instruments/jobs/:id` (every 3s) until `done` (returns the instrument + coverage notes) or `failed` (returns `error` + `detail`). This exists because Replit's gateway cuts requests off at ~60s and the AI draft takes 1–2 minutes — the first live attempt died with a bare 502 for exactly that reason.
 
 **5.5 Retention sweep** — Phase D
 A daily `retention_sweep` job finds sessions past the configured retention window with no active hold, deletes their R2 objects, and nulls `capture_events.storage_ref`/`answers` while keeping the row shell so the audit trail survives.
