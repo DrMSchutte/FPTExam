@@ -131,3 +131,32 @@ usersRouter.get("/me", requireAuth, async (req: AuthedRequest, res) => {
     createdAt: u.createdAt.toISOString(),
   });
 });
+
+// Authenticator (MFA) setup for a supervisory account. Every Administrator,
+// Assessor and Invigilator signs in with password + 6-digit code; the secret
+// is minted when the account is created, but the person still has to scan it
+// into their authenticator app. This lets the Administrator (re)issue that
+// setup - e.g. when the QR wasn't captured at creation, or the person changed
+// phones. Issuing a new secret invalidates the old one, so it is audited.
+usersRouter.post(
+  "/:id/mfa/reset",
+  requireAuth,
+  requireRole("administrator"),
+  async (req: AuthedRequest, res) => {
+    const [user] = await db.select().from(users).where(eq(users.id, req.params.id));
+    if (!user) return res.status(404).json({ error: "User not found." });
+    const roles = (await db.select().from(userRoles).where(eq(userRoles.userId, user.id))).map((r) => r.role);
+    if (roles.length === 1 && roles[0] === "learner") {
+      return res.status(400).json({ error: "Learners sign in with a password only - no authenticator to set up." });
+    }
+    const secret = generateMfaSecret();
+    await db.update(users).set({ mfaSecret: secret }).where(eq(users.id, user.id));
+    await db.insert(auditLog).values({
+      actorId: req.auth!.userId,
+      action: "user_mfa_reset",
+      targetType: "user",
+      targetId: user.id,
+    });
+    return res.json({ id: user.id, email: user.email, mfaOtpAuthUrl: buildMfaOtpAuthUrl(user.email, secret) });
+  }
+);

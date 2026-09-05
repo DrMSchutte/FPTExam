@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import type { PublicUser, UserRole, EmploymentRelationship } from "@shared/types";
 import { PageHeader, Card, CardHead, Notice, Badge, Empty, PlusIcon } from "../../components/ui";
+import MfaSetupPanel from "../../components/MfaSetupPanel";
 import type { BadgeTone } from "../../components/ui";
 
 // What the Administrator is registering. Students, assessors and invigilators
@@ -40,6 +41,8 @@ export default function AdminUsers() {
   const [users, setUsers] = useState<PublicUser[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // Authenticator setup to show after creating (or resetting) a supervisory account.
+  const [mfaSetup, setMfaSetup] = useState<{ name: string; email: string; otpAuthUrl: string } | null>(null);
   const [showCreate, setShowCreate] = useState(false);
 
   const [type, setType] = useState<PersonType>("student");
@@ -73,7 +76,7 @@ export default function AdminUsers() {
     setError(null);
     setMessage(null);
     try {
-      await api.post("/users", {
+      const created = await api.post<{ mfaOtpAuthUrl: string | null }>("/users", {
         name,
         email,
         password,
@@ -82,12 +85,25 @@ export default function AdminUsers() {
         source: "manual",
       });
       setMessage(`${name} registered.`);
+      if (created.mfaOtpAuthUrl) setMfaSetup({ name, email, otpAuthUrl: created.mfaOtpAuthUrl });
       setName("");
       setEmail("");
       setPassword("");
       chooseType(type);
       setShowCreate(false);
       await loadUsers();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function resetMfa(u: PublicUser) {
+    if (!window.confirm(`Issue a new authenticator setup for ${u.name}? Their current authenticator entry will stop working.`)) return;
+    setError(null);
+    try {
+      const r = await api.post<{ mfaOtpAuthUrl: string }>(`/users/${u.id}/mfa/reset`);
+      setMfaSetup({ name: u.name, email: u.email, otpAuthUrl: r.mfaOtpAuthUrl });
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (err) {
       setError((err as Error).message);
     }
@@ -109,6 +125,9 @@ export default function AdminUsers() {
 
       {error && <Notice kind="error">{error}</Notice>}
       {message && <Notice kind="success">{message}</Notice>}
+      {mfaSetup && (
+        <MfaSetupPanel name={mfaSetup.name} email={mfaSetup.email} otpAuthUrl={mfaSetup.otpAuthUrl} onClose={() => setMfaSetup(null)} />
+      )}
 
       {showCreate && (
         <Card className="mb-5">
@@ -216,7 +235,7 @@ export default function AdminUsers() {
           {users.length ? (
             <table className="data">
               <thead>
-                <tr><th>Name</th><th>Email</th><th>Roles</th><th className="text-right">Source</th></tr>
+                <tr><th>Name</th><th>Email</th><th>Roles</th><th>Source</th><th className="text-right">Sign-in</th></tr>
               </thead>
               <tbody>
                 {users.map((u) => (
@@ -233,8 +252,17 @@ export default function AdminUsers() {
                         ))}
                       </span>
                     </td>
-                    <td className="text-right">
+                    <td>
                       {u.source === "fptstaff" ? <Badge tone="blue">FPTStaff</Badge> : <Badge tone="gray">Added here</Badge>}
+                    </td>
+                    <td className="text-right">
+                      {u.roles.length === 1 && u.roles[0] === "learner" ? (
+                        <span className="t-sub">Password</span>
+                      ) : (
+                        <button type="button" className="lnk" onClick={() => resetMfa(u)}>
+                          Authenticator setup
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

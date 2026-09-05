@@ -155,7 +155,12 @@ async function queueFor(assessorId: string, sittingId?: string) {
     const jobs = await db
       .select({ payload: backgroundJobs.payload, status: backgroundJobs.status, createdAt: backgroundJobs.createdAt })
       .from(backgroundJobs)
-      .where(eq(backgroundJobs.jobType, "ai_response_review"))
+      .where(
+        and(
+          eq(backgroundJobs.jobType, "ai_response_review"),
+          sql`${backgroundJobs.payload}->>'sessionId' IN (${sql.join(pendingIds.map((id) => sql`${id}`), sql`, `)})`
+        )
+      )
       .orderBy(desc(backgroundJobs.createdAt));
     for (const j of jobs) {
       const sid = (j.payload as { sessionId?: string }).sessionId;
