@@ -4,6 +4,7 @@ import { eq, and } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { learnerSessions, examSittings, assessmentInstruments } from "../db/schema.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
+import { enqueueJob } from "../jobs/runner.js";
 
 export const sessionsRouter = Router();
 
@@ -124,5 +125,8 @@ sessionsRouter.post("/sessions/:id/submit", requireAuth, requireRole("learner"),
     .set({ status: "submitted", submissionTime: new Date() })
     .where(eq(learnerSessions.id, session.id))
     .returning();
+  // Kick off the AI Response-Review for the Assessor (build brief §5.4). It
+  // runs in the background worker; the Assessor's dossier shows its progress.
+  await enqueueJob("ai_response_review", { sessionId: session.id });
   return res.json(updated);
 });

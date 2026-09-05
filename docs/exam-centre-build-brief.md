@@ -10,7 +10,8 @@ Built and verified in the cloud sandbox (monorepo at `/home/claude/fpt-exam`, gi
 
 - **Phase A — Foundation. Done.** Repo scaffold; full schema + migrations; login with JWT sessions, TOTP MFA, RBAC; Administrator area (qualifications with SAQA ID, instruments via manual entry / AI-from-SAQA / AI-from-uploaded-QCTO-document, sittings, learner assignment, user registration); Learner exam-taking (list → start → answer per type → autosave → submit). Verified end-to-end in a browser and in the database. AI-from-SAQA verified against a fixture and the live Anthropic API (the live `saqa.org.za` fetch itself needs Replit's network — the sandbox blocks it); AI-from-upload verified fully, including the AI refusing to fabricate outcomes from a cover-page-only document.
 - **Phase B — Design & model alignment. Done.** FPT-branded design system (green/blue tokens, Manrope + Public Sans, sidebar shell, shared UI kit; light mode only). Roles cut to four; Moderator/Head QA dashboards and routes removed. New registration flow (type → FPTStaff dropdown, inactive until connected → add-details fallback → role pre-filled); `users.source` + `users.fptstaff_id` (migration 0004). Fourth "From Curricula Builder" instrument tab (disabled until its API exists). Deploy hardening: build tooling in `dependencies`; server runs migrations and creates the bootstrap admin idempotently on start-up. Verified via a full Playwright walkthrough including registering an external invigilator and seeing them offered under the independent-invigilation filter.
-- **Not started:** Phase C (Assessor dossier, Response-Review engine, sign-off + FPTStaff push), Phase D (pre-checks, capture loop, seal/hash, Invigilator console, Integrity engine, R2, retention), Phase E (FPTStaff connection live), Phase F (Curricula Builder live). See `build-roadmap.md`.
+- **Built (Phase C, 4 Sep 2026):** Assessor workspace (marking queue, dossier, sign-off), Response-Review engine running as a polled background job on submit, the assessor-only result gate (`GET /sessions/:id/result` 404 until `signed_off_at`), FPTStaff result-push rows queued at sign-off (delivered in Phase E), audit entry per sign-off, learner result + feedback + gap-map view.
+- **Not started:** Phase D (pre-checks, capture loop, seal/hash, Invigilator console, Integrity engine, R2, retention), Phase E (FPTStaff connection live), Phase F (Curricula Builder live). See `build-roadmap.md`.
 
 ---
 
@@ -43,7 +44,7 @@ Built and verified in the cloud sandbox (monorepo at `/home/claude/fpt-exam`, gi
       /admin                 AdminDashboard (sidebar shell + nested routes) → Overview, Qualifications, Instruments, Sittings, Users
       /learner               exam-taking UI (built); pre-checks + consent (Phase D)
       /invigilator           holding page now; live console (video wall, flag feed, actions) in Phase D
-      /assessor              holding page now; marking dossier + sign-off in Phase C
+      /assessor              AssessorDashboard (shell) → AssessorQueue (queue / signed off), AssessorDossier (marking, AI review, gap map, sign-off)
       Login.tsx
     /lib                     api client (JSON + multipart), auth context, ProtectedRoute
   index.html                 Google Fonts link, color-scheme: light
@@ -55,7 +56,7 @@ Built and verified in the cloud sandbox (monorepo at `/home/claude/fpt-exam`, gi
       schema.ts              Drizzle schema
       bootstrap.ts           runMigrations() + ensureBootstrapAdmin() — called on server start AND by the standalone scripts
       migrate.ts / seed.ts / reset-admin-password.ts
-    /jobs                    background workers — Phase C/D (ai-response-review, ai-integrity, fptstaff-push, retention-sweep)
+    /jobs/runner.ts          Postgres-polled worker: ai_response_review, fptstaff_push (built); ai_integrity, retention_sweep (Phase D)
     /realtime                WebSocket server, invigilation channel — Phase D
     /storage                 R2 client wrapper — Phase D
     /auth                    JWT issuance, RBAC middleware, MFA, password hashing
@@ -63,7 +64,7 @@ Built and verified in the cloud sandbox (monorepo at `/home/claude/fpt-exam`, gi
       /saqa                  SAQA qualification-page fetcher + ELO/AC parser (Section 5.6)
       /qcto                  uploaded QCTO document text extraction (Section 5.7)
       /fptstaff              people lookup / people push / result push — Phase E (Section 5.9)
-    /ai                      prompt builders + parsers: instrumentGeneration, documentOutcomeExtraction (built); responseReview (Phase C); integrity (Phase D)
+    /ai                      prompt builders + parsers: instrumentGeneration, documentOutcomeExtraction, responseReview (built); integrity (Phase D)
   index.ts                   boots: migrations → bootstrap admin → listen; serves client/dist in production
 /shared
   types.ts                   TypeScript types shared by client and server
@@ -345,7 +346,7 @@ All engines call the Anthropic API with tool-use structured output, never free-t
 
 **Document Outcome Extraction Engine** (built) — input: qualification title + extracted document text (≤ ~60k chars). Output: `{ "found": bool, "exitLevelOutcomes": [], "assessmentCriteria": [], "notFoundReason": "..." }`. Must say `found=false` rather than invent.
 
-**Response-Review Engine** — Phase C — input: `assessment_instruments.questions` (with rubrics and `elo_ref`) + `learner_sessions.answers`. Output:
+**Response-Review Engine** (built, `server/src/ai/responseReview.ts`) — input: `assessment_instruments.questions` (with rubrics and `elo_ref`) + `learner_sessions.answers`. Output:
 ```json
 {
   "per_question": [{"question_id": "...", "suggested_mark": 0, "max_mark": 0, "criteria_matched": ["..."], "criteria_missed": ["..."], "depth_note": "e.g. correct but no justification", "confidence": "low|medium|high", "rationale": "..."}],

@@ -22,3 +22,40 @@ export interface Question {
   modelAnswerOrRubric?: string;
   eloRef?: string;
 }
+
+// ---- Phase C: marking, Response-Review, sign-off (mirrors shared/types.ts) ----
+
+export type Outcome = "competent" | "not_yet_competent";
+export type AiConfidence = "low" | "medium" | "high";
+
+export interface AiQuestionSuggestion {
+  questionId: string;
+  suggestedMark: number;
+  maxMark: number;
+  criteriaMatched: string[];
+  criteriaMissed: string[];
+  depthNote: string;
+  confidence: AiConfidence;
+  rationale: string;
+}
+
+export interface GapMapEntry {
+  eloRef: string;
+  demonstrated: boolean;
+  evidenceQuestionIds: string[];
+  note: string;
+}
+
+export interface QuestionMark {
+  questionId: string;
+  mark: number;
+  feedback: string;
+}
+
+export type SuggestionDecision = "accepted" | "edited" | "overridden";
+
+export interface SuggestionReview {
+  questionId: string;
+  decision: SuggestionDecision;
+  reason: string;
+}

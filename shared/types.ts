@@ -166,3 +166,128 @@ export interface PaperResponse {
   questions: LearnerQuestion[];
   existingAnswers: Record<string, string>;
 }
+
+// ---- Phase C: marking, Response-Review, sign-off -----------------------------
+
+export type Outcome = "competent" | "not_yet_competent";
+export type AiConfidence = "low" | "medium" | "high";
+
+// One entry per question from the Response-Review engine (build brief §6).
+export interface AiQuestionSuggestion {
+  questionId: string;
+  suggestedMark: number;
+  maxMark: number;
+  criteriaMatched: string[];
+  criteriaMissed: string[];
+  depthNote: string;
+  confidence: AiConfidence;
+  rationale: string;
+}
+
+export interface GapMapEntry {
+  eloRef: string;
+  demonstrated: boolean;
+  evidenceQuestionIds: string[];
+  note: string;
+}
+
+export interface AiResponseReview {
+  id: string;
+  sessionId: string;
+  perQuestionSuggestions: AiQuestionSuggestion[];
+  gapMap: GapMapEntry[];
+  suggestedOutcome: Outcome | null;
+  summary: string | null;
+  generatedAt: string;
+}
+
+export interface QuestionMark {
+  questionId: string;
+  mark: number;
+  feedback: string;
+}
+
+export type SuggestionDecision = "accepted" | "edited" | "overridden";
+
+export interface SuggestionReview {
+  questionId: string;
+  decision: SuggestionDecision;
+  reason: string;
+}
+
+export interface AssessorDecision {
+  id: string;
+  sessionId: string;
+  assessorId: string;
+  perCriterionMarks: QuestionMark[];
+  aiSuggestionsReview: SuggestionReview[];
+  overallFeedback: string | null;
+  outcome: Outcome | null;
+  totalMark: number | null;
+  totalMax: number | null;
+  signedOffAt: string | null;
+  updatedAt: string;
+}
+
+// A row in the Assessor's marking queue.
+export interface AssessorQueueItem {
+  sessionId: string;
+  status: SessionStatus;
+  submissionTime: string | null;
+  learnerName: string;
+  learnerEmail: string;
+  sittingId: string;
+  startTime: string;
+  qualificationId: string;
+  qualificationTitle: string;
+  qctoRegistrationType: QctoRegistrationType;
+  instrumentVersion: string;
+  aiReviewStatus: "pending" | "running" | "done" | "failed" | "none";
+  decisionState: "none" | "draft" | "signed_off";
+  outcome: Outcome | null;
+  totalMark: number | null;
+  totalMax: number | null;
+}
+
+// Everything the Assessor needs to mark one script.
+export interface Dossier {
+  session: {
+    id: string;
+    status: SessionStatus;
+    submissionTime: string | null;
+    answers: Record<string, string>;
+  };
+  learner: { id: string; name: string; email: string };
+  sitting: { id: string; startTime: string; endTime: string };
+  qualification: Qualification;
+  instrument: {
+    id: string;
+    version: string;
+    questions: Question[]; // full questions incl. rubric - assessor-only
+    passMarkOrCompetencyRule: unknown;
+  };
+  aiReview: AiResponseReview | null;
+  aiReviewJob: { status: string; error?: string; detail?: string } | null;
+  decision: AssessorDecision | null;
+}
+
+// What the learner sees once - and only once - the Assessor has signed off.
+export interface LearnerResult {
+  sessionId: string;
+  qualificationTitle: string;
+  outcome: Outcome;
+  totalMark: number;
+  totalMax: number;
+  percentage: number;
+  signedOffAt: string;
+  overallFeedback: string | null;
+  perQuestion: Array<{
+    questionId: string;
+    prompt: string;
+    maxMark: number;
+    mark: number;
+    feedback: string;
+    eloRef?: string;
+  }>;
+  gapMap: GapMapEntry[];
+}

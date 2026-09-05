@@ -286,26 +286,67 @@ export const aiIntegrityReports = pgTable("ai_integrity_reports", {
   generatedAt: timestamp("generated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// The Response-Review engine's output for one submission (build brief §6).
+// Stored verbatim and never edited - the Assessor's own marks live in
+// assessorDecisions so both stay visible side by side for audit.
 export const aiResponseReviews = pgTable("ai_response_reviews", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   sessionId: uuid("session_id")
     .notNull()
     .references(() => learnerSessions.id, { onDelete: "cascade" }),
+  // array of {questionId, suggestedMark, maxMark, criteriaMatched[], criteriaMissed[], depthNote, confidence, rationale}
   perQuestionSuggestions: jsonb("per_question_suggestions").notNull(),
+  // array of {eloRef, demonstrated: bool, evidenceQuestionIds[], note}
+  gapMap: jsonb("gap_map"),
+  suggestedOutcome: text("suggested_outcome"), // 'competent' | 'not_yet_competent'
+  summary: text("summary"),
   generatedAt: timestamp("generated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const assessorDecisions = pgTable("assessor_decisions", {
+// One row per session: the Assessor's marking, saved as a draft until
+// signedOffAt is set. Setting signedOffAt IS the result-release event (§5.1) -
+// there is no other gate.
+export const assessorDecisions = pgTable(
+  "assessor_decisions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => learnerSessions.id, { onDelete: "cascade" }),
+    assessorId: uuid("assessor_id")
+      .notNull()
+      .references(() => users.id),
+    // array of {questionId, mark, feedback}
+    perCriterionMarks: jsonb("per_criterion_marks").notNull(),
+    // array of {questionId, decision: 'accepted'|'edited'|'overridden', reason}
+    aiSuggestionsReview: jsonb("ai_suggestions_review").notNull(),
+    // Assessor's overall feedback to the learner (released with the result).
+    overallFeedback: text("overall_feedback"),
+    outcome: text("outcome"), // 'competent' | 'not_yet_competent', set at sign-off
+    totalMark: integer("total_mark"),
+    totalMax: integer("total_max"),
+    signedOffAt: timestamp("signed_off_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqSession: uniqueIndex("uq_assessor_decisions_session").on(t.sessionId),
+  })
+);
+
+// Queued result pushes to FPTStaff (§5.9). Rows are created at sign-off from
+// Phase C onward; they are actually delivered once the FPTStaff connection
+// exists (Phase E). Until then they sit at status 'pending' so nothing is lost.
+export const fptstaffResultPushes = pgTable("fptstaff_result_pushes", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   sessionId: uuid("session_id")
     .notNull()
     .references(() => learnerSessions.id, { onDelete: "cascade" }),
-  assessorId: uuid("assessor_id")
-    .notNull()
-    .references(() => users.id),
-  perCriterionMarks: jsonb("per_criterion_marks").notNull(),
-  aiSuggestionsReview: jsonb("ai_suggestions_review").notNull(),
-  signedOffAt: timestamp("signed_off_at", { withTimezone: true }),
+  payload: jsonb("payload").notNull(),
+  status: text("status").notNull().default("pending"), // pending | sent | failed
+  attempts: integer("attempts").notNull().default(0),
+  fptstaffAck: jsonb("fptstaff_ack"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
 });
 
 export const moderationRecords = pgTable("moderation_records", {

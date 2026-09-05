@@ -112,6 +112,7 @@ const questionSchema = z.object({
   maxMark: z.number().nonnegative(),
   modelAnswerOrRubric: z.string().optional(),
   options: z.array(z.string()).optional(), // for mcq
+  eloRef: z.string().optional(), // which outcome / criterion the question addresses
 });
 
 const createSchema = z.object({

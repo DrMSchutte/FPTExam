@@ -11,6 +11,8 @@ import { instrumentsRouter } from "./routes/instruments.js";
 import { sittingsRouter } from "./routes/sittings.js";
 import { sessionsRouter } from "./routes/sessions.js";
 import { runMigrations, ensureBootstrapAdmin } from "./db/bootstrap.js";
+import { assessorRouter } from "./routes/assessor.js";
+import { startJobRunner } from "./jobs/runner.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -34,6 +36,8 @@ app.use("/api/sittings", sittingsRouter);
 // sessionsRouter's own paths already start with /sessions or /me, so it
 // mounts at the API root rather than under an extra prefix.
 app.use("/api", sessionsRouter);
+// Assessor marking routes (/assessor/queue, /sessions/:id/dossier, ...).
+app.use("/api", assessorRouter);
 
 // In production, serve the built client so a single Replit run command
 // (npm run build && npm start) is enough - no separate static host needed.
@@ -63,6 +67,7 @@ async function start() {
 
   app.listen(port, () => {
     console.log(`FPT Exam API listening on port ${port}`);
+    startJobRunner();
   });
 }
 

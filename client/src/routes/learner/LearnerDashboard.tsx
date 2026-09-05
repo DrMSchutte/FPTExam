@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
-import type { LearnerSittingSummary, PaperResponse } from "@shared/types";
+import type { LearnerSittingSummary, PaperResponse, LearnerResult } from "@shared/types";
+import LearnerResultView from "./LearnerResultView";
 
 const STATUS_LABEL: Record<string, string> = {
   scheduled: "Scheduled",
@@ -19,11 +20,27 @@ export default function LearnerDashboard() {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [submitted, setSubmitted] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Released results, keyed by session. A result exists only once the
+  // Assessor has signed off - the server answers 404 until then.
+  const [results, setResults] = useState<Record<string, LearnerResult>>({});
+  const [viewingResult, setViewingResult] = useState<LearnerResult | null>(null);
 
   const loadSittings = useCallback(async () => {
     try {
       const list = await api.get<LearnerSittingSummary[]>("/me/sittings");
       setSittings(list);
+      const done = list.filter((s) => s.status === "submitted" || s.status === "sealed");
+      const found: Record<string, LearnerResult> = {};
+      await Promise.all(
+        done.map(async (s) => {
+          try {
+            found[s.sessionId] = await api.get<LearnerResult>(`/sessions/${s.sessionId}/result`);
+          } catch {
+            /* not released yet */
+          }
+        })
+      );
+      setResults(found);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -100,6 +117,10 @@ export default function LearnerDashboard() {
     loadSittings();
   }
 
+  if (viewingResult) {
+    return <LearnerResultView result={viewingResult} onBack={() => setViewingResult(null)} />;
+  }
+
   if (activeSessionId && paper) {
     return (
       <div className="max-w-3xl mx-auto p-8 space-y-6">
@@ -121,8 +142,8 @@ export default function LearnerDashboard() {
           <section className="card p-6">
             <h2 className="text-lg font-medium text-green-700">Submitted</h2>
             <p className="text-sm text-ink-muted mt-2">
-              Your exam has been submitted. Your Assessor and Moderator will review it and your result will
-              be released automatically once both have signed off.
+              Your exam has been submitted. Your Assessor will mark it, and your result and feedback appear
+              here the moment they sign it off.
             </p>
           </section>
         ) : (
@@ -226,7 +247,16 @@ export default function LearnerDashboard() {
                 <td>{STATUS_LABEL[s.status] ?? s.status}</td>
                 <td className="py-2 text-right">
                   {s.status === "submitted" || s.status === "sealed" ? (
-                    <span className="text-xs text-ink-faint">Awaiting sign-off</span>
+                    results[s.sessionId] ? (
+                      <button
+                        onClick={() => setViewingResult(results[s.sessionId])}
+                        className="rounded bg-brand-600 text-white px-3 py-1.5 text-xs font-medium hover:bg-brand-700"
+                      >
+                        View result
+                      </button>
+                    ) : (
+                      <span className="text-xs text-ink-faint">Awaiting sign-off</span>
+                    )
                   ) : (
                     <button
                       onClick={() => openSession(s.sessionId, s.status)}
