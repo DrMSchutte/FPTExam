@@ -3,6 +3,7 @@ import Shell, { NAV_ICONS } from "../../components/Shell";
 import AdminOverview from "./AdminOverview";
 import AdminQualifications from "./AdminQualifications";
 import AdminInstruments from "./AdminInstruments";
+import AdminInstrumentDetail from "./AdminInstrumentDetail";
 import AdminSittings from "./AdminSittings";
 import AdminUsers from "./AdminUsers";
 
@@ -21,6 +22,7 @@ export default function AdminDashboard() {
         <Route index element={<AdminOverview />} />
         <Route path="qualifications" element={<AdminQualifications />} />
         <Route path="instruments" element={<AdminInstruments />} />
+        <Route path="instruments/:id" element={<AdminInstrumentDetail />} />
         <Route path="sittings" element={<AdminSittings />} />
         <Route path="users" element={<AdminUsers />} />
       </Routes>

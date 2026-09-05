@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { randomUUID } from "node:crypto";
-import type { Question, QuestionType } from "../types.js";
+import type { Question, QuestionType, BloomLevel } from "../types.js";
+import { bloomGuidanceForNqf } from "./bloom.js";
 
 const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5-20250929";
 
@@ -27,6 +28,9 @@ export interface GenerateInstrumentInput {
   // Assessment Specifications document". Defaults to a SAQA-shaped phrasing
   // for backward compatibility with the existing SAQA intake path.
   sourceDescription?: string;
+  // NQF level of the qualification, when known - sets the expected cognitive
+  // demand (Bloom's) of the paper.
+  nqfLevel?: number | null;
 }
 
 export interface GeneratedInstrument {
@@ -64,15 +68,24 @@ const SUBMIT_TOOL = {
             },
             eloRef: {
               type: "string",
-              description: "Plain-language reference to which Exit Level Outcome / Assessment Criterion this question addresses.",
+              description: "The Exit Level Outcome this question addresses - quote it by its number and opening words exactly as listed, e.g. 'ELO 3: Complete statutory returns…'.",
+            },
+            acRef: {
+              type: "string",
+              description: "The Associated Assessment Criterion this question evidences - quote it by its number and opening words exactly as listed, e.g. 'AC 3.2: IRP5 certificates are issued…'.",
+            },
+            bloomLevel: {
+              type: "string",
+              enum: ["remember", "understand", "apply", "analyse", "evaluate", "create"],
+              description: "The cognitive demand of the question on the revised Bloom's taxonomy - what the learner must actually DO with the knowledge to answer.",
             },
           },
-          required: ["type", "prompt", "maxMark", "modelAnswerOrRubric", "eloRef"],
+          required: ["type", "prompt", "maxMark", "modelAnswerOrRubric", "eloRef", "acRef", "bloomLevel"],
         },
       },
       passMarkOrCompetencyRule: {
         type: "string",
-        description: "Plain-language pass mark or competency rule for this paper, e.g. '50% overall' or 'Competent in every criterion'.",
+        description: "Plain-language pass mark or competency rule for this paper, expressed in PERCENTAGES ONLY (e.g. '50% overall' or '50% overall and at least 40% in every Exit Level Outcome'). Never quote absolute mark totals - the system computes those from the paper.",
       },
       coverageNotes: {
         type: "string",
@@ -91,7 +104,9 @@ function buildPrompt(input: GenerateInstrumentInput): string {
 
 The paper must be built directly from this qualification's registered Exit Level Outcomes (ELOs) and Associated Assessment Criteria (ACs), ${sourceDescription}. Draft a full assessment instrument: a mix of question types (multiple choice, short answer, long answer, practical/portfolio upload) appropriate to what each outcome actually requires a learner to demonstrate - don't force every outcome into the same question type. Every question must be traceable to a specific ELO/AC via its eloRef field. Aim for enough questions to cover every ELO at least once within the given time allocation; it's fine to leave a gap uncovered rather than write a weak or unsupported question - note any gap in coverageNotes instead.
 
-Time allocation for the whole paper: ${input.timeAllocationMinutes} minutes.
+Cognitive demand: ${bloomGuidanceForNqf(input.nqfLevel ?? null)} Label every question with the Bloom's level it genuinely demands (a recall question is "remember" even if the topic is advanced), and do not let recall-only questions dominate a paper at this level. Cover every Assessment Criterion, not only every Exit Level Outcome; where one question can honestly evidence several criteria, say which one it primarily evidences in acRef.
+
+Time allocation for the whole paper: ${input.timeAllocationMinutes} minutes. Size the paper to that time: roughly one mark per 1.5-2 minutes of writing time, so about ${Math.round(input.timeAllocationMinutes / 1.75)} marks in total across ${Math.max(8, Math.min(40, Math.round(input.timeAllocationMinutes / 6)))} or so questions. Keep rubrics specific but compact (3-6 marking points each) - the paper must be complete; never stop part-way through the question list.
 Permitted materials: ${input.permittedMaterials.length > 0 ? input.permittedMaterials.join(", ") : "none specified"}.
 
 EXIT LEVEL OUTCOMES (${sourceDescription}):
@@ -115,12 +130,17 @@ export async function generateInstrumentFromSaqa(
 
   const message = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 8000,
+    max_tokens: 20000,
     tools: [SUBMIT_TOOL],
     tool_choice: { type: "tool", name: "submit_instrument" },
     messages: [{ role: "user", content: buildPrompt(input) }],
   });
 
+  if (message.stop_reason === "max_tokens") {
+    throw new Error(
+      "The AI's answer was cut off before it finished (output limit reached). Try a shorter time allocation or split the paper into two instruments."
+    );
+  }
   const toolUse = message.content.find(
     (block): block is Anthropic.ToolUseBlock => block.type === "tool_use"
   );
@@ -136,6 +156,8 @@ export async function generateInstrumentFromSaqa(
       options?: string[];
       modelAnswerOrRubric: string;
       eloRef: string;
+      acRef?: string;
+      bloomLevel?: BloomLevel;
     }>;
     passMarkOrCompetencyRule: string;
     coverageNotes: string;
@@ -153,6 +175,8 @@ export async function generateInstrumentFromSaqa(
     options: q.type === "mcq" ? q.options : undefined,
     modelAnswerOrRubric: q.modelAnswerOrRubric,
     eloRef: q.eloRef,
+    acRef: q.acRef,
+    bloomLevel: q.bloomLevel,
   }));
 
   return {

@@ -50,6 +50,13 @@
       "when": 1788546587786,
       "tag": "0006_phase_c_marking",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788600816889,
+      "tag": "0007_standard_check_and_progress",
+      "breakpoints": true
     }
   ]
 }

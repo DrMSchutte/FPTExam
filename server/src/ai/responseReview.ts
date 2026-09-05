@@ -138,12 +138,17 @@ export async function reviewSubmission(input: ReviewInput): Promise<ReviewOutput
 
   const message = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 8000,
+    max_tokens: 20000,
     tools: [SUBMIT_TOOL],
     tool_choice: { type: "tool", name: "submit_review" },
     messages: [{ role: "user", content: buildPrompt(input) }],
   });
 
+  if (message.stop_reason === "max_tokens") {
+    throw new Error(
+      "The AI's answer was cut off before it finished (output limit reached). Try a shorter time allocation or split the paper into two instruments."
+    );
+  }
   const toolUse = message.content.find(
     (block): block is Anthropic.ToolUseBlock => block.type === "tool_use"
   );

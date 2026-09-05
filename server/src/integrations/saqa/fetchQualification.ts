@@ -49,6 +49,19 @@ interface RawExtract {
   exitLevelOutcomes: string[];
   assessmentCriteria: string[];
   sourceUrl: string;
+  nqfLevel: number | null;
+}
+
+// SAQA shows the level as e.g. "NQF Level 05" or "Level TBA: Pre-2009 was L5".
+function findNqfLevel(lines: string[]): number | null {
+  for (const l of lines) {
+    const m = l.match(/NQF\s+Level\s*0?(\d{1,2})\b/i) ?? l.match(/Pre-2009\s+was\s+L(\d{1,2})\b/i);
+    if (m) {
+      const n = Number(m[1]);
+      if (n >= 1 && n <= 10) return n;
+    }
+  }
+  return null;
 }
 
 // Turn the page into text with one line per block element, so headings and
@@ -158,7 +171,7 @@ export function parseSaqaHtml(html: string, sourceUrl: string): RawExtract {
     );
   }
 
-  return { exitLevelOutcomes, assessmentCriteria, sourceUrl };
+  return { exitLevelOutcomes, assessmentCriteria, sourceUrl, nqfLevel: findNqfLevel(lines) };
 }
 
 export async function fetchSaqaExtract(saqaQualificationId: string): Promise<RawExtract> {

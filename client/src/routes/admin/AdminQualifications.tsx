@@ -26,6 +26,7 @@ export default function AdminQualifications() {
   const [qTitle, setQTitle] = useState("");
   const [qType, setQType] = useState<"fisa" | "eisa">("eisa");
   const [qSaqaId, setQSaqaId] = useState("");
+  const [qNqf, setQNqf] = useState("");
 
   async function createQualification(e: React.FormEvent) {
     e.preventDefault();
@@ -36,11 +37,23 @@ export default function AdminQualifications() {
         title: qTitle,
         qctoRegistrationType: qType,
         saqaQualificationId: qSaqaId || undefined,
+        nqfLevel: qNqf ? Number(qNqf) : undefined,
       });
       setQTitle("");
       setQSaqaId("");
+      setQNqf("");
       setMessage("Qualification added.");
       setShowCreate(false);
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function setNqf(qualificationId: string, value: string) {
+    setError(null);
+    try {
+      await api.patch(`/qualifications/${qualificationId}`, { nqfLevel: value ? Number(value) : null });
       await load();
     } catch (err) {
       setError((err as Error).message);
@@ -83,7 +96,7 @@ export default function AdminQualifications() {
       {showCreate && (
         <Card className="mb-5">
           <CardHead title="Add a qualification" subtitle="The SAQA ID is the id= value from the qualification's page on allqs.saqa.org.za" />
-          <form onSubmit={createQualification} className="grid grid-cols-[2fr_1fr_1fr_auto] gap-3.5 items-end px-5 pt-4 pb-5">
+          <form onSubmit={createQualification} className="grid grid-cols-[2fr_1fr_1fr_1fr_auto] gap-3.5 items-end px-5 pt-4 pb-5">
             <div>
               <label className="field-lbl">Title</label>
               <input className="inp" value={qTitle} onChange={(e) => setQTitle(e.target.value)} required placeholder="e.g. Occupational Certificate: Electrician" />
@@ -99,6 +112,15 @@ export default function AdminQualifications() {
               <label className="field-lbl">SAQA ID <span className="normal-case font-normal text-ink-faint">(optional)</span></label>
               <input className="inp" value={qSaqaId} onChange={(e) => setQSaqaId(e.target.value)} placeholder="e.g. 91234" />
             </div>
+            <div>
+              <label className="field-lbl">NQF level <span className="normal-case font-normal text-ink-faint">(optional)</span></label>
+              <select className="inp" value={qNqf} onChange={(e) => setQNqf(e.target.value)}>
+                <option value="">Not set</option>
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </div>
             <button className="btn">Add</button>
           </form>
         </Card>
@@ -110,7 +132,7 @@ export default function AdminQualifications() {
           {qualifications.length ? (
             <table className="data">
               <thead>
-                <tr><th>Qualification</th><th>Type</th><th>SAQA ID</th><th>Instruments</th></tr>
+                <tr><th>Qualification</th><th>Type</th><th>SAQA ID</th><th>NQF</th><th>Instruments</th></tr>
               </thead>
               <tbody>
                 {qualifications.map((q) => (
@@ -140,6 +162,19 @@ export default function AdminQualifications() {
                           Set SAQA ID
                         </button>
                       )}
+                    </td>
+                    <td>
+                      <select
+                        className="inp !w-20 !py-1 text-xs"
+                        value={q.nqfLevel ?? ""}
+                        onChange={(e) => setNqf(q.id, e.target.value)}
+                        title="NQF level - sets the expected cognitive demand in the assessment-standard check. Filled automatically from SAQA when a paper is drafted from it."
+                      >
+                        <option value="">—</option>
+                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                          <option key={n} value={n}>{n}</option>
+                        ))}
+                      </select>
                     </td>
                     <td>{instrumentCount(q.id)}</td>
                   </tr>

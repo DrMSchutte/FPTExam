@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 import { api, pollJob } from "../../lib/api";
+import { Link } from "react-router-dom";
+import type { JobProgress } from "@shared/types";
+import JobProgressPanel, { DRAFT_STAGES_SAQA, DRAFT_STAGES_UPLOAD } from "../../components/JobProgressPanel";
+import { VerdictBadge } from "../../components/standard";
 import type { Qualification, AssessmentInstrument, Question, QuestionType } from "@shared/types";
 import { PageHeader, Card, CardHead, Notice, Badge, Empty, PlusIcon } from "../../components/ui";
 import type { BadgeTone } from "../../components/ui";
@@ -106,12 +110,14 @@ export default function AdminInstruments() {
   const [genMaterials, setGenMaterials] = useState("");
   const [genLoading, setGenLoading] = useState(false);
   const [genCoverageNotes, setGenCoverageNotes] = useState<string | null>(null);
+  const [genProgress, setGenProgress] = useState<JobProgress | null>(null);
 
   async function generateFromSaqa(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setMessage(null);
     setGenCoverageNotes(null);
+    setGenProgress(null);
     setGenLoading(true);
     try {
       const { jobId } = await api.post<{ jobId: string }>("/instruments/generate", {
@@ -121,9 +127,10 @@ export default function AdminInstruments() {
         permittedMaterials: genMaterials ? genMaterials.split(",").map((s) => s.trim()).filter(Boolean) : [],
       });
       const done = await pollJob<{ instrument: AssessmentInstrument; coverageNotes: string; questionCount: number }>(
-        `/instruments/jobs/${jobId}`
+        `/instruments/jobs/${jobId}`,
+        { onProgress: setGenProgress }
       );
-      setMessage(`Instrument drafted from SAQA (${done.questionCount} questions).`);
+      setMessage(`Instrument drafted from SAQA (${done.questionCount} questions). Open it to see the assessment-standard check.`);
       setGenCoverageNotes(done.coverageNotes);
       setGenVersion("");
       await loadAll();
@@ -142,12 +149,14 @@ export default function AdminInstruments() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadCoverageNotes, setUploadCoverageNotes] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<JobProgress | null>(null);
 
   async function generateFromUpload(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setMessage(null);
     setUploadCoverageNotes(null);
+    setUploadProgress(null);
     if (!uploadFile) {
       setError("Choose a document to upload first.");
       return;
@@ -162,9 +171,10 @@ export default function AdminInstruments() {
       if (uploadMaterials) form.append("permittedMaterials", uploadMaterials);
       const { jobId } = await api.postForm<{ jobId: string }>("/instruments/generate-from-upload", form);
       const done = await pollJob<{ instrument: AssessmentInstrument; coverageNotes: string; questionCount: number }>(
-        `/instruments/jobs/${jobId}`
+        `/instruments/jobs/${jobId}`,
+        { onProgress: setUploadProgress }
       );
-      setMessage(`Instrument drafted from the uploaded document (${done.questionCount} questions).`);
+      setMessage(`Instrument drafted from the uploaded document (${done.questionCount} questions). Open it to see the assessment-standard check.`);
       setUploadCoverageNotes(done.coverageNotes);
       setUploadVersion("");
       setUploadFile(null);
@@ -291,8 +301,9 @@ export default function AdminInstruments() {
                   <div><label className="field-lbl">Version</label><input className="inp" value={genVersion} onChange={(e) => setGenVersion(e.target.value)} required placeholder="e.g. 2026-v1" /></div>
                   <div><label className="field-lbl">Time (minutes)</label><input className="inp tabular" type="number" min={1} value={genTime} onChange={(e) => setGenTime(Number(e.target.value))} required /></div>
                   <div className="col-span-2"><label className="field-lbl">Permitted materials <span className="normal-case font-normal text-ink-faint">(comma-separated)</span></label><input className="inp" value={genMaterials} onChange={(e) => setGenMaterials(e.target.value)} placeholder="e.g. Non-programmable calculator, SANS 10142-1 code book" /></div>
-                  <button disabled={genLoading} className="btn">{genLoading ? "Drafting — usually 1–2 minutes…" : "Draft from SAQA"}</button>
+                  <button disabled={genLoading} className="btn">{genLoading ? "Drafting…" : "Draft from SAQA"}</button>
                 </form>
+                <JobProgressPanel title="Drafting from SAQA" stages={DRAFT_STAGES_SAQA} progress={genProgress} active={genLoading} />
                 <CoverageNotes notes={genCoverageNotes} />
               </>
             )}
@@ -308,8 +319,9 @@ export default function AdminInstruments() {
                   <div><label className="field-lbl">Time (minutes)</label><input className="inp tabular" type="number" min={1} value={uploadTime} onChange={(e) => setUploadTime(Number(e.target.value))} required /></div>
                   <div className="col-span-2"><label className="field-lbl">Permitted materials <span className="normal-case font-normal text-ink-faint">(comma-separated)</span></label><input className="inp" value={uploadMaterials} onChange={(e) => setUploadMaterials(e.target.value)} placeholder="e.g. Non-programmable calculator" /></div>
                   <div><label className="field-lbl">Document <span className="normal-case font-normal text-ink-faint">(PDF or .docx)</span></label><input type="file" accept=".pdf,.docx,.doc,.txt" onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} required className="block w-full text-sm text-ink-muted file:mr-3 file:rounded-md file:border-0 file:bg-brand-50 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-brand-700" /></div>
-                  <button disabled={uploadLoading} className="btn">{uploadLoading ? "Drafting — usually 1–2 minutes…" : "Draft from document"}</button>
+                  <button disabled={uploadLoading} className="btn">{uploadLoading ? "Drafting…" : "Draft from document"}</button>
                 </form>
+                <JobProgressPanel title="Drafting from the uploaded document" stages={DRAFT_STAGES_UPLOAD} progress={uploadProgress} active={uploadLoading} />
                 <CoverageNotes notes={uploadCoverageNotes} />
               </>
             )}
@@ -323,7 +335,7 @@ export default function AdminInstruments() {
           {instruments.length ? (
             <table className="data">
               <thead>
-                <tr><th>Qualification</th><th>Version</th><th>Questions</th><th>Time</th><th className="text-right">Source</th></tr>
+                <tr><th>Qualification</th><th>Version</th><th>Questions</th><th>Time</th><th>Source</th><th>Standard check</th><th></th></tr>
               </thead>
               <tbody>
                 {instruments.map((i) => {
@@ -334,7 +346,9 @@ export default function AdminInstruments() {
                       <td>{i.version}</td>
                       <td>{i.questions.length}</td>
                       <td>{i.timeAllocationMinutes} min</td>
-                      <td className="text-right"><Badge tone={b.tone}>{b.label}</Badge></td>
+                      <td><Badge tone={b.tone}>{b.label}</Badge></td>
+                      <td><VerdictBadge verdict={i.qualityReview?.verdict ?? null} /></td>
+                      <td className="text-right"><Link to={`/admin/instruments/${i.id}`} className="lnk">Open</Link></td>
                     </tr>
                   );
                 })}

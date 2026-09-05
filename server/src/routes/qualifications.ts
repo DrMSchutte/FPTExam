@@ -15,6 +15,7 @@ const createSchema = z.object({
   // allqs.saqa.org.za/showQualification.php?id=. Optional - only needed to
   // use the AI-from-SAQA instrument generation path (POST /instruments/generate).
   saqaQualificationId: z.string().optional(),
+  nqfLevel: z.number().int().min(1).max(10).optional(),
 });
 
 // Administrator-only, per Section 3: qualification/instrument setup is a
@@ -35,6 +36,7 @@ qualificationsRouter.post(
         qctoRegistrationType: parsed.data.qctoRegistrationType,
         aqpReference: parsed.data.aqpReference ?? null,
         saqaQualificationId: parsed.data.saqaQualificationId ?? null,
+        nqfLevel: parsed.data.nqfLevel ?? null,
       })
       .returning();
     return res.status(201).json(created);
@@ -58,6 +60,7 @@ const updateSchema = z.object({
   title: z.string().min(1).optional(),
   aqpReference: z.string().optional(),
   saqaQualificationId: z.string().optional(),
+  nqfLevel: z.number().int().min(1).max(10).nullable().optional(),
 });
 
 // Primarily how an Administrator attaches/updates the SAQA qualification ID

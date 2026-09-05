@@ -113,6 +113,10 @@ export const qualifications = pgTable("qualifications", {
   // required to use the AI-from-SAQA instrument intake path (Section 5.6 of
   // the build brief).
   saqaQualificationId: text("saqa_qualification_id"),
+  // NQF level (1-10). Drives the expected cognitive demand (Bloom's) of a
+  // paper in the assessment-standard check. Filled from the SAQA record when
+  // a paper is drafted from SAQA, or set by an Administrator.
+  nqfLevel: integer("nqf_level"),
 });
 
 // A durable snapshot of what was parsed off a SAQA qualification page at the
@@ -128,6 +132,7 @@ export const saqaQualificationExtracts = pgTable("saqa_qualification_extracts", 
   exitLevelOutcomes: jsonb("exit_level_outcomes").notNull(),
   assessmentCriteria: jsonb("assessment_criteria").notNull(),
   sourceUrl: text("source_url").notNull(),
+  nqfLevel: integer("nqf_level"),
   fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -164,6 +169,12 @@ export const assessmentInstruments = pgTable("assessment_instruments", {
   // Set only when source = 'qcto_upload' - the exact uploaded-document
   // snapshot the paper was drafted from.
   qctoExtractId: uuid("qcto_extract_id").references(() => qctoDocumentExtracts.id),
+  // Assessment-standard check (build brief §5.10): coverage of every ELO/AC,
+  // Bloom's taxonomy distribution against the NQF level, question-type and
+  // mark-weighting mix, verdict and recommendations. Written after AI drafting
+  // and whenever an Administrator re-runs the check.
+  qualityReview: jsonb("quality_review"),
+  qualityReviewedAt: timestamp("quality_reviewed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -398,5 +409,8 @@ export const backgroundJobs = pgTable("background_jobs", {
   // a client poll for a long-running job's result instead of holding one
   // request open past Replit's ~60s gateway timeout.
   result: jsonb("result"),
+  // Live progress for long jobs the UI is watching:
+  // { step, totalSteps, label, detail?, startedAt, updatedAt }.
+  progress: jsonb("progress"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

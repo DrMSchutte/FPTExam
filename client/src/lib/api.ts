@@ -1,4 +1,4 @@
-import type { ApiError } from "@shared/types";
+import type { ApiError, JobProgress } from "@shared/types";
 
 const BASE = "/api";
 
@@ -27,20 +27,25 @@ function describeError(err: ApiError, path: string, status: number): string {
 }
 
 export type JobStatus<T> =
-  | { status: "running" | "pending" }
-  | ({ status: "done" } & T)
-  | { status: "failed"; error: string; detail?: string };
+  | { status: "running" | "pending"; progress?: JobProgress | null }
+  | ({ status: "done"; progress?: JobProgress | null } & T)
+  | { status: "failed"; error: string; detail?: string; progress?: JobProgress | null };
 
 // Poll a background job until it finishes. Long AI work (drafting a paper)
 // runs server-side as a job precisely so no single request has to stay open
 // past a proxy's timeout; this is the client half of that.
 export async function pollJob<T>(
   path: string,
-  { intervalMs = 3000, timeoutMs = 10 * 60 * 1000 }: { intervalMs?: number; timeoutMs?: number } = {}
+  {
+    intervalMs = 3000,
+    timeoutMs = 10 * 60 * 1000,
+    onProgress,
+  }: { intervalMs?: number; timeoutMs?: number; onProgress?: (p: JobProgress | null) => void } = {}
 ): Promise<T> {
   const started = Date.now();
   for (;;) {
     const job = await request<JobStatus<T>>(path, { method: "GET" });
+    onProgress?.(job.progress ?? null);
     if (job.status === "done") return job as unknown as T;
     if (job.status === "failed") throw new Error(job.detail ? `${job.error} ${job.detail}` : job.error);
     if (Date.now() - started > timeoutMs) throw new Error("Gave up waiting for the job to finish.");
