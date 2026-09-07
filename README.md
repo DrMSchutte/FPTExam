@@ -93,3 +93,8 @@ step deliberately won't overwrite a live credential - run
 
 See `build-roadmap.md` (project) - Phase C (Assessor marking & the AI
 Response-Review engine) is next, then Phase D (proctoring & invigilation).
+
+
+## Updating a running Repl
+
+Every update is: **Git pane → Pull → Run**. The Run command (`npm run build && npm start`) installs any new dependencies first (`prebuild`), rebuilds, applies pending database migrations on start, and serves. No Shell steps.
