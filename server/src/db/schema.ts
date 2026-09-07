@@ -45,7 +45,12 @@ export const instrumentSourceEnum = pgEnum("instrument_source", [
   "ai_generated",
   "curricula_builder",
   "qcto_upload",
+  "uploaded_paper", // an existing paper + memo uploaded and read into structured form (the primary route from 5 Sep 2026)
 ]);
+
+// Where a paper stands on the way into use (docs/restructure-2026-09-05.md §2).
+// Only 'ready' and 'override' papers can be scheduled into a sitting.
+export const intakeStatusEnum = pgEnum("intake_status", ["checking", "ready", "blocked", "override"]);
 
 export const sessionStatusEnum = pgEnum("session_status", [
   "scheduled",
@@ -175,6 +180,12 @@ export const assessmentInstruments = pgTable("assessment_instruments", {
   // and whenever an Administrator re-runs the check.
   qualityReview: jsonb("quality_review"),
   qualityReviewedAt: timestamp("quality_reviewed_at", { withTimezone: true }),
+  // Gate: set from the standard check's verdict; 'override' only via an
+  // Administrator's reasoned override (audited).
+  intakeStatus: intakeStatusEnum("intake_status").notNull().default("checking"),
+  intakeOverrideReason: text("intake_override_reason"),
+  // For uploaded papers: the original filenames, for the audit trail.
+  sourceFiles: jsonb("source_files"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

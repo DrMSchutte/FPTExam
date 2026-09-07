@@ -48,16 +48,27 @@ export default function AssessorDossier() {
     if (!id) return;
     const d = await api.get<Dossier>(`/sessions/${id}/dossier`);
     setDossier(d);
-    // Seed the form from the saved draft (once), never from the AI.
-    if (d.decision) {
-      setMarks((prev) => {
-        if (Object.keys(prev).length > 0) return prev;
-        const next: Record<string, { mark: string; feedback: string }> = {};
-        for (const m of d.decision!.perCriterionMarks) next[m.questionId] = { mark: String(m.mark), feedback: m.feedback ?? "" };
-        return next;
-      });
-      setOverallFeedback((prev) => prev || (d.decision!.overallFeedback ?? ""));
-    }
+    // Seed the form once: from the saved draft if there is one; otherwise from
+    // the AI's recommendations (docs/restructure-2026-09-05.md §3 - the AI
+    // assesses, the assessor reviews and endorses). The AI's own record is
+    // never changed by this; what the assessor signs off is theirs.
+    setMarks((prev) => {
+      if (Object.keys(prev).length > 0) return prev;
+      const next: Record<string, { mark: string; feedback: string }> = {};
+      if (d.decision) {
+        for (const m of d.decision.perCriterionMarks) next[m.questionId] = { mark: String(m.mark), feedback: m.feedback ?? "" };
+      } else if (d.aiReview && !d.decision) {
+        for (const sug of d.aiReview.perQuestionSuggestions) {
+          next[sug.questionId] = {
+            mark: String(sug.suggestedMark),
+            feedback: sug.criteriaMissed.length ? sug.criteriaMissed.map((c) => `Missing: ${c}`).join(" ") : sug.depthNote,
+          };
+        }
+      }
+      return next;
+    });
+    if (d.decision) setOverallFeedback((prev) => prev || (d.decision!.overallFeedback ?? ""));
+    else if (d.aiReview) setOverallFeedback((prev) => prev || (d.aiReview!.summary ?? ""));
     return d;
   }, [id]);
 
@@ -223,6 +234,11 @@ export default function AssessorDossier() {
 
       {error && <Notice kind="error">{error}</Notice>}
       {message && <Notice kind="success">{message}</Notice>}
+      {!signedOff && ai && !dossier.decision && (
+        <Notice kind="success">
+          The AI has marked this script against the memo and its marks and feedback are filled in below, each tagged <strong>AI-recommended</strong>. Read them, change any you disagree with, then sign off. Your sign-off is the assessment decision.
+        </Notice>
+      )}
 
       {signedOff && dossier.decision && (
         <Card className="p-5 mb-6 border-brand-100 bg-brand-50/40">
@@ -344,7 +360,14 @@ export default function AssessorDossier() {
 
                 <div className="px-5 py-4 border-t border-line bg-surface-2/60 grid grid-cols-[120px_1fr] gap-4 items-start">
                   <div>
-                    <label className="field-lbl">Your mark</label>
+                    <label className="field-lbl">
+                      Your mark
+                      {!signedOff && s && m?.mark !== undefined && m.mark !== "" && (
+                        <span className={"ml-2 normal-case tracking-normal font-semibold " + (Number(m.mark) === s.suggestedMark ? "text-blue-600" : "text-amber-700")}>
+                          {Number(m.mark) === s.suggestedMark ? "AI-recommended" : "Changed from AI"}
+                        </span>
+                      )}
+                    </label>
                     {signedOff ? (
                       <p className="font-display font-extrabold text-xl tabular">
                         {savedMark?.mark ?? 0}
@@ -446,8 +469,8 @@ export default function AssessorDossier() {
               {!signedOff && (
                 <div className="mt-4 flex flex-col gap-2">
                   {ai && (
-                    <button type="button" className="btn-ghost" onClick={acceptAllAi}>
-                      Use all AI marks as a starting point
+                    <button type="button" className="btn-ghost" onClick={acceptAllAi} title="Put every mark back to the AI's recommendation">
+                      Reset to AI recommendations
                     </button>
                   )}
                   <button type="button" className="btn-ghost" onClick={() => void saveDraft()} disabled={saveState === "saving"}>

@@ -4,7 +4,8 @@ import { api, pollJob } from "../../lib/api";
 import type { AssessmentInstrument, Qualification, JobProgress, BloomLevel, InstrumentQualityReview } from "@shared/types";
 import { PageHeader, Card, CardHead, Notice, Badge, Pill, Empty } from "../../components/ui";
 import JobProgressPanel, { CHECK_STAGES } from "../../components/JobProgressPanel";
-import { BLOOM_ORDER, BLOOM_LABEL, BLOOM_TONE, BloomBadge, VerdictBadge, CoverageDot } from "../../components/standard";
+import { BLOOM_ORDER, BLOOM_LABEL, BloomBadge, VerdictBadge, CoverageDot } from "../../components/standard";
+import { GateBadge, sourceBadge } from "./AdminAssessments";
 
 const fmt = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -97,6 +98,8 @@ export default function AdminInstrumentDetail() {
   const [checking, setChecking] = useState(false);
   const [progress, setProgress] = useState<JobProgress | null>(null);
   const [showRubrics, setShowRubrics] = useState(false);
+  const [overriding, setOverriding] = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -128,10 +131,24 @@ export default function AdminInstrumentDetail() {
     }
   }
 
+  async function submitOverride() {
+    if (!id) return;
+    setError(null);
+    try {
+      await api.post(`/instruments/${id}/override`, { reason: overrideReason });
+      setOverriding(false);
+      setOverrideReason("");
+      setMessage("Override recorded. This paper can now be scheduled; the reason is in the audit log.");
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
   if (!instrument) {
     return (
       <>
-        <PageHeader title="Instrument" />
+        <PageHeader title="Assessment" />
         {error ? <Notice kind="error">{error}</Notice> : <p className="text-sm text-ink-muted">Loading…</p>}
       </>
     );
@@ -154,8 +171,8 @@ export default function AdminInstrumentDetail() {
   return (
     <>
       <div className="mb-4">
-        <Link to="/admin/instruments" className="lnk">
-          ← Instruments
+        <Link to="/admin/assessments" className="lnk">
+          ← Set up an Assessment
         </Link>
       </div>
       <PageHeader
@@ -164,8 +181,8 @@ export default function AdminInstrumentDetail() {
         action={
           <div className="flex items-center gap-3">
             {qualification && <Pill tone={qualification.qctoRegistrationType}>{qualification.qctoRegistrationType.toUpperCase()}</Pill>}
-            <VerdictBadge verdict={review?.verdict ?? null} />
-            <button type="button" className="btn" onClick={runCheck} disabled={checking}>
+            <GateBadge status={instrument.intakeStatus} />
+            <button type="button" className="btn-ghost" onClick={runCheck} disabled={checking}>
               {checking ? "Checking…" : review ? "Re-run standard check" : "Run standard check"}
             </button>
           </div>
@@ -174,6 +191,48 @@ export default function AdminInstrumentDetail() {
       {error && <Notice kind="error">{error}</Notice>}
       {message && <Notice kind="success">{message}</Notice>}
       <JobProgressPanel title="Assessment-standard check" stages={CHECK_STAGES} progress={progress} active={checking} />
+
+      {instrument.intakeStatus === "blocked" && (
+        <Card className="mt-5 border-amber-200">
+          <div className="p-5 flex items-start gap-4">
+            <div className="flex-1">
+              <p className="font-display font-bold text-[15px]">This paper cannot be scheduled yet</p>
+              <p className="text-sm text-ink-muted mt-1">
+                The standard check found it does not meet the assessment standard (see below). Fix the paper at its source and upload it again as a new version, or — if you are satisfied it is fit for use — record an override with a reason. The reason goes in the audit log.
+              </p>
+              {overriding && (
+                <div className="mt-3 flex gap-2 items-start">
+                  <textarea className="inp" rows={2} placeholder="Why this paper may be used despite the check" value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} />
+                  <button type="button" className="btn whitespace-nowrap" onClick={submitOverride} disabled={overrideReason.trim().length < 10}>
+                    Record override
+                  </button>
+                  <button type="button" className="btn-ghost" onClick={() => setOverriding(false)}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+            {!overriding && (
+              <button type="button" className="btn-ghost whitespace-nowrap" onClick={() => setOverriding(true)}>
+                Override with a reason
+              </button>
+            )}
+          </div>
+        </Card>
+      )}
+      {instrument.intakeStatus === "override" && (
+        <Card className="mt-5 border-blue-100">
+          <div className="p-5">
+            <p className="font-display font-bold text-[15px]">Override in force</p>
+            <p className="text-sm text-ink-muted mt-1">This paper may be scheduled despite the standard check. Reason recorded: “{instrument.intakeOverrideReason}”</p>
+          </div>
+        </Card>
+      )}
+      {instrument.sourceFiles && instrument.sourceFiles.length > 0 && (
+        <p className="t-sub mt-4">
+          Source: <Badge tone={sourceBadge(instrument.source).tone}>{sourceBadge(instrument.source).label}</Badge> {instrument.sourceFiles.join(" · ")}
+        </p>
+      )}
 
       {/* ---------------- Standard check ---------------- */}
       {review ? (

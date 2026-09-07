@@ -9,6 +9,7 @@ import {
   learnerSessions,
   users,
   userRoles,
+  assessmentInstruments,
 } from "../db/schema.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
 
@@ -73,6 +74,20 @@ sittingsRouter.post(
 
     if (new Date(endTime) <= new Date(startTime)) {
       return res.status(400).json({ error: "endTime must be after startTime." });
+    }
+
+    // The standard check is the gate (docs/restructure-2026-09-05.md §2): only a
+    // paper that meets the standard, or carries a reasoned override, may be sat.
+    const [instrument] = await db.select().from(assessmentInstruments).where(eq(assessmentInstruments.id, instrumentId));
+    if (!instrument) return res.status(404).json({ error: "Instrument not found." });
+    if (instrument.qualificationId !== qualificationId) {
+      return res.status(400).json({ error: "That paper belongs to a different qualification." });
+    }
+    if (instrument.intakeStatus !== "ready" && instrument.intakeStatus !== "override") {
+      return res.status(400).json({
+        error: instrument.intakeStatus === "checking" ? "This paper is still being checked against the assessment standard." : "This paper does not meet the assessment standard and cannot be scheduled.",
+        detail: "Open the paper under Set up an Assessment to see the check, fix and re-upload, or record an override with a reason.",
+      });
     }
 
     // Role-independence check (Section 2): the Assessor of record cannot

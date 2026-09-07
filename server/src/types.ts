@@ -70,6 +70,8 @@ export const BLOOM_LEVELS: BloomLevel[] = ["remember", "understand", "apply", "a
 
 export type CoverageStatus = "covered" | "partial" | "not_covered";
 export type StandardVerdict = "meets_standard" | "meets_with_minor_gaps" | "does_not_meet";
+// Gate on the way into use: only ready/override papers can be scheduled.
+export type IntakeStatus = "checking" | "ready" | "blocked" | "override";
 
 export interface CoverageEntry {
   kind: "elo" | "ac";

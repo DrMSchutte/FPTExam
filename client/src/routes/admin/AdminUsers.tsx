@@ -114,7 +114,7 @@ export default function AdminUsers() {
   return (
     <>
       <PageHeader
-        title="Users"
+        title="Register People"
         subtitle="Every account on the exam centre. Students, assessors and invigilators are pulled through from FPTStaff once it's connected."
         action={
           <button className="btn whitespace-nowrap" onClick={() => setShowCreate((v) => !v)}>

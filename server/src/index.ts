@@ -12,6 +12,7 @@ import { sittingsRouter } from "./routes/sittings.js";
 import { sessionsRouter } from "./routes/sessions.js";
 import { runMigrations, ensureBootstrapAdmin } from "./db/bootstrap.js";
 import { assessorRouter } from "./routes/assessor.js";
+import { assessmentsRouter } from "./routes/assessments.js";
 import { startJobRunner } from "./jobs/runner.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -32,6 +33,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/qualifications", qualificationsRouter);
 app.use("/api/instruments", instrumentsRouter);
+app.use("/api/assessments", assessmentsRouter);
 app.use("/api/sittings", sittingsRouter);
 // sessionsRouter's own paths already start with /sessions or /me, so it
 // mounts at the API root rather than under an extra prefix.

@@ -40,22 +40,23 @@ export default function AdminOverview() {
   const count = (role: string) => data?.users.filter((u) => u.roles.includes(role as never)).length ?? 0;
   const eisa = data?.qualifications.filter((q) => q.qctoRegistrationType === "eisa").length ?? 0;
   const fisa = data?.qualifications.filter((q) => q.qctoRegistrationType === "fisa").length ?? 0;
-  const aiDrafted = data?.instruments.filter((i) => i.source !== "manual").length ?? 0;
+  const ready = data?.instruments.filter((i) => i.intakeStatus === "ready" || i.intakeStatus === "override").length ?? 0;
+  const blocked = data?.instruments.filter((i) => i.intakeStatus === "blocked").length ?? 0;
 
   const tiles = [
+    {
+      label: "Assessments",
+      value: data?.instruments.length,
+      sub: `${ready} ready to schedule${blocked ? ` · ${blocked} blocked` : ""}`,
+      tone: "bg-brand-50 text-brand-700",
+      icon: <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6" />,
+    },
     {
       label: "Qualifications",
       value: data?.qualifications.length,
       sub: `${eisa} EISA · ${fisa} FISA`,
-      tone: "bg-brand-50 text-brand-700",
-      icon: <path d="M22 10v6M2 10l10-5 10 5-10 5zM6 12v5c3 3 9 3 12 0v-5" />,
-    },
-    {
-      label: "Instruments",
-      value: data?.instruments.length,
-      sub: `${aiDrafted} AI-drafted · ${(data?.instruments.length ?? 0) - aiDrafted} manual`,
       tone: "bg-blue-50 text-blue-700",
-      icon: <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6" />,
+      icon: <path d="M22 10v6M2 10l10-5 10 5-10 5zM6 12v5c3 3 9 3 12 0v-5" />,
     },
     {
       label: "Upcoming sittings",
@@ -65,7 +66,7 @@ export default function AdminOverview() {
       icon: <><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></>,
     },
     {
-      label: "Registered users",
+      label: "People registered",
       value: data?.users.length,
       sub: `${count("assessor")} assessors · ${count("learner")} learners`,
       tone: "bg-teal-50 text-teal-700",
@@ -141,13 +142,12 @@ export default function AdminOverview() {
       </Card>
 
       <Card>
-        <CardHead title="Setting up an exam" subtitle="The usual order of operations" />
-        <div className="grid grid-cols-2 lg:grid-cols-4">
+        <CardHead title="Setting up an exam" subtitle="Three steps, in this order" />
+        <div className="grid grid-cols-3">
           {[
-            ["Add a qualification", "With its SAQA ID, if you have one"],
-            ["Build the instrument", "Manually, AI-drafted, or from Curricula Builder (FISA)"],
-            ["Register people", "Assessor, invigilators, learners — from FPTStaff once connected"],
-            ["Schedule the sitting", "Assign learners to it"],
+            ["Set up an Assessment", "Upload the paper and its memo (or link it from Curricula Builder). It is checked against the assessment standard before it can be used."],
+            ["Register People", "Assessor, invigilators and learners — pulled from FPTStaff once connected, added here until then."],
+            ["Schedule the Sitting", "Pick the assessment, the window, the assessor and invigilators, and assign the learners."],
           ].map(([t, d], i) => (
             <div key={t} className="px-[18px] py-4 border-r border-line last:border-r-0">
               <div className="h-6 w-6 rounded-[7px] bg-brand-50 text-brand-600 font-display font-extrabold text-[13px] grid place-items-center mb-2">

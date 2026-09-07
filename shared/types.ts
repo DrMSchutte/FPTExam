@@ -25,7 +25,8 @@ export type InstrumentSource =
   | "manual"
   | "ai_generated"
   | "curricula_builder"
-  | "qcto_upload";
+  | "qcto_upload"
+  | "uploaded_paper";
 
 export type SessionStatus =
   | "scheduled"
@@ -132,6 +133,9 @@ export interface AssessmentInstrument {
   qctoExtractId: string | null;
   qualityReview: InstrumentQualityReview | null;
   qualityReviewedAt: string | null;
+  intakeStatus: IntakeStatus;
+  intakeOverrideReason: string | null;
+  sourceFiles: string[] | null;
   createdAt: string;
 }
 
@@ -307,6 +311,8 @@ export const BLOOM_LEVELS: BloomLevel[] = ["remember", "understand", "apply", "a
 
 export type CoverageStatus = "covered" | "partial" | "not_covered";
 export type StandardVerdict = "meets_standard" | "meets_with_minor_gaps" | "does_not_meet";
+// Gate on the way into use: only ready/override papers can be scheduled.
+export type IntakeStatus = "checking" | "ready" | "blocked" | "override";
 
 export interface CoverageEntry {
   kind: "elo" | "ac";

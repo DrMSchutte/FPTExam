@@ -10,6 +10,7 @@ export interface NavItem {
   end: boolean;
   label: string;
   icon: ReactNode;
+  badge?: number; // e.g. scripts waiting to be marked
 }
 
 export function BrandMark({ size = 34 }: { size?: number }) {
@@ -61,7 +62,10 @@ export default function Shell({
               }
             >
               <span className="h-[17px] w-[17px] shrink-0 [&>svg]:h-full [&>svg]:w-full">{item.icon}</span>
-              {item.label}
+              <span className="flex-1">{item.label}</span>
+              {item.badge ? (
+                <span className="min-w-[20px] rounded-full bg-brand-600 px-1.5 py-px text-center text-[11px] font-bold text-white tabular">{item.badge}</span>
+              ) : null}
             </NavLink>
           ))}
         </nav>

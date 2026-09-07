@@ -50,6 +50,20 @@ interface RawExtract {
   assessmentCriteria: string[];
   sourceUrl: string;
   nqfLevel: number | null;
+  title: string | null;
+}
+
+// The page's header table reads "SAQA QUAL ID | QUALIFICATION TITLE" followed
+// by the id and the title on the next lines.
+function findTitle(lines: string[], saqaId: string): string | null {
+  const i = lines.findIndex((l) => /^QUALIFICATION TITLE$/i.test(l));
+  if (i === -1) return null;
+  for (let j = i + 1; j < Math.min(lines.length, i + 4); j++) {
+    const l = lines[j];
+    if (l === saqaId || /^\d+$/.test(l)) continue;
+    if (l.length > 3 && !/^QUALIFICATION RULES$/i.test(l)) return l;
+  }
+  return null;
 }
 
 // SAQA shows the level as e.g. "NQF Level 05" or "Level TBA: Pre-2009 was L5".
@@ -148,7 +162,7 @@ async function fetchOne(url: string): Promise<string> {
 
 // Exported separately so the parser can be tested against saved HTML without
 // a network call.
-export function parseSaqaHtml(html: string, sourceUrl: string): RawExtract {
+export function parseSaqaHtml(html: string, sourceUrl: string, saqaId = ""): RawExtract {
   const lines = htmlToLines(html);
 
   const eloIdx = findHeading(lines, ELO_HEADING);
@@ -171,7 +185,7 @@ export function parseSaqaHtml(html: string, sourceUrl: string): RawExtract {
     );
   }
 
-  return { exitLevelOutcomes, assessmentCriteria, sourceUrl, nqfLevel: findNqfLevel(lines) };
+  return { exitLevelOutcomes, assessmentCriteria, sourceUrl, nqfLevel: findNqfLevel(lines), title: findTitle(lines, saqaId) };
 }
 
 export async function fetchSaqaExtract(saqaQualificationId: string): Promise<RawExtract> {
@@ -181,7 +195,7 @@ export async function fetchSaqaExtract(saqaQualificationId: string): Promise<Raw
   for (const url of urls) {
     try {
       const html = await fetchOne(url);
-      return parseSaqaHtml(html, url);
+      return parseSaqaHtml(html, url, saqaQualificationId);
     } catch (err) {
       lastError = err;
       // Try the next candidate URL before giving up.

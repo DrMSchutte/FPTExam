@@ -36,6 +36,8 @@ export default function AdminSittings() {
   const invigilators = users.filter((u) => u.roles.includes("invigilator"));
   const learners = users.filter((u) => u.roles.includes("learner"));
   const qualTitle = (id: string) => qualifications.find((q) => q.id === id)?.title ?? "—";
+  // The standard check is the gate: only ready/override papers may be sat.
+  const schedulable = instruments.filter((i) => i.intakeStatus === "ready" || i.intakeStatus === "override");
 
   // ---- Create sitting ----
   const [sitQualId, setSitQualId] = useState("");
@@ -103,8 +105,8 @@ export default function AdminSittings() {
   return (
     <>
       <PageHeader
-        title="Exam Sittings"
-        subtitle="A scheduled window where a cohort sits a specific instrument, with its proctoring settings and assigned assessor and invigilators."
+        title="Schedule the Sitting"
+        subtitle="A scheduled window where a group of learners sits one assessment, with its assessor, invigilators and proctoring settings. Only assessments that passed the standard check (or carry an override) can be chosen."
         action={
           <button className="btn whitespace-nowrap" onClick={() => setShowCreate((v) => !v)}>
             {showCreate ? "Close" : <><PlusIcon /> New sitting</>}
@@ -120,21 +122,34 @@ export default function AdminSittings() {
           <CardHead title="New sitting" />
           <form onSubmit={createSitting} className="px-5 pt-4 pb-5 space-y-4">
             <div className="grid grid-cols-2 gap-3.5">
-              <div>
-                <label className="field-lbl">Qualification</label>
-                <select className="inp" value={sitQualId} onChange={(e) => setSitQualId(e.target.value)} required>
-                  <option value="">Select…</option>
-                  {qualifications.map((q) => <option key={q.id} value={q.id}>{q.title}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="field-lbl">Instrument</label>
-                <select className="inp" value={sitInstrId} onChange={(e) => setSitInstrId(e.target.value)} required>
-                  <option value="">Select…</option>
-                  {instruments.filter((i) => !sitQualId || i.qualificationId === sitQualId).map((i) => (
-                    <option key={i.id} value={i.id}>{i.version} · {i.questions.length} questions · {i.timeAllocationMinutes} min</option>
+              <div className="col-span-2">
+                <label className="field-lbl">Assessment</label>
+                <select
+                  className="inp"
+                  value={sitInstrId}
+                  onChange={(e) => {
+                    const inst = instruments.find((i) => i.id === e.target.value);
+                    setSitInstrId(e.target.value);
+                    setSitQualId(inst?.qualificationId ?? "");
+                  }}
+                  required
+                >
+                  <option value="">Choose an assessment…</option>
+                  {schedulable.map((i) => (
+                    <option key={i.id} value={i.id}>
+                      {qualTitle(i.qualificationId)} — {i.version} · {i.questions.length} questions · {i.timeAllocationMinutes} min
+                      {i.intakeStatus === "override" ? " · override" : ""}
+                    </option>
                   ))}
                 </select>
+                {schedulable.length === 0 && (
+                  <p className="text-xs text-amber-700 mt-1.5">
+                    No assessment is ready to schedule yet. Bring one in under Set up an Assessment; it becomes available once it passes the standard check.
+                  </p>
+                )}
+                {instruments.length > schedulable.length && (
+                  <p className="t-sub mt-1.5">{instruments.length - schedulable.length} assessment(s) hidden because they are blocked or still being checked.</p>
+                )}
               </div>
               <div><label className="field-lbl">Start</label><input className="inp" type="datetime-local" value={sitStart} onChange={(e) => setSitStart(e.target.value)} required /></div>
               <div><label className="field-lbl">End</label><input className="inp" type="datetime-local" value={sitEnd} onChange={(e) => setSitEnd(e.target.value)} required /></div>

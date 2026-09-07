@@ -9,6 +9,7 @@ import {
   saqaQualificationExtracts,
   qctoDocumentExtracts,
   backgroundJobs,
+  auditLog,
 } from "../db/schema.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
 import { fetchSaqaExtract, SaqaExtractError } from "../integrations/saqa/fetchQualification.js";
@@ -47,7 +48,7 @@ export const instrumentsRouter = Router();
 // { error, detail }, so failures are as explicit as they were before.
 // ---------------------------------------------------------------------------
 
-type JobOutcome =
+export type JobOutcome =
   | { instrumentId: string; questionCount: number; coverageNotes: string }
   | { instrumentId: string; qualityCheck: true }
   | { error: string; detail: string };
@@ -55,7 +56,7 @@ type JobOutcome =
 // Live progress the UI shows while a job runs - a numbered stage plus a
 // human label ("Fetching the SAQA record…"). Written to the job row so any
 // poll sees it, not just the browser that started the job.
-async function setProgress(jobId: string, step: number, totalSteps: number, label: string, detail?: string): Promise<void> {
+export async function setProgress(jobId: string, step: number, totalSteps: number, label: string, detail?: string): Promise<void> {
   const [job] = await db.select({ progress: backgroundJobs.progress }).from(backgroundJobs).where(eq(backgroundJobs.id, jobId));
   const prev = (job?.progress ?? {}) as { startedAt?: string };
   const now = new Date().toISOString();
@@ -67,7 +68,7 @@ async function setProgress(jobId: string, step: number, totalSteps: number, labe
 
 // Runs the assessment-standard check for an instrument and stores it on the
 // row. Shared by the generation paths (final stage) and the re-run endpoint.
-async function runStandardCheck(instrumentId: string): Promise<InstrumentQualityReview> {
+export async function runStandardCheck(instrumentId: string): Promise<InstrumentQualityReview> {
   const [instrument] = await db.select().from(assessmentInstruments).where(eq(assessmentInstruments.id, instrumentId));
   if (!instrument) throw new Error("Instrument not found.");
   const [qualification] = await db.select().from(qualifications).where(eq(qualifications.id, instrument.qualificationId));
@@ -104,14 +105,37 @@ async function runStandardCheck(instrumentId: string): Promise<InstrumentQuality
     timeAllocationMinutes: instrument.timeAllocationMinutes,
     passRule: (instrument.passMarkOrCompetencyRule as { rule?: string } | null)?.rule ?? "",
   });
+  // The check is the gate (docs/restructure-2026-09-05.md §2): a paper that
+  // does not meet the standard is blocked from sittings until fixed or
+  // overridden with a reason. An existing override is left alone.
+  const gate = review.verdict === "does_not_meet" ? "blocked" : "ready";
   await db
     .update(assessmentInstruments)
-    .set({ qualityReview: review, qualityReviewedAt: new Date() })
+    .set({
+      qualityReview: review,
+      qualityReviewedAt: new Date(),
+      ...(instrument.intakeStatus === "override" ? {} : { intakeStatus: gate }),
+    })
     .where(eq(assessmentInstruments.id, instrumentId));
   return review;
 }
 
-async function startJob(jobType: string, payload: Record<string, unknown>): Promise<string> {
+// FPT Exam no longer authors papers (docs/restructure-2026-09-05.md §2). The
+// manual-entry and AI-drafting endpoints below stay in the codebase - the
+// drafting capability is destined for Curricula Builder - but are switched off
+// unless explicitly enabled for a development environment.
+const AUTHORING_ENABLED = process.env.ENABLE_PAPER_AUTHORING === "true";
+function authoringGate(_req: AuthedRequest, res: import("express").Response, next: import("express").NextFunction) {
+  if (!AUTHORING_ENABLED) {
+    return res.status(410).json({
+      error: "FPT Exam does not author papers.",
+      detail: "Upload the paper and its memo under Set up an Assessment, or link it from Curricula Builder.",
+    });
+  }
+  next();
+}
+
+export async function startJob(jobType: string, payload: Record<string, unknown>): Promise<string> {
   const [job] = await db
     .insert(backgroundJobs)
     .values({ jobType, payload, status: "running", attempts: 1 })
@@ -119,7 +143,7 @@ async function startJob(jobType: string, payload: Record<string, unknown>): Prom
   return job.id;
 }
 
-async function finishJob(jobId: string, outcome: JobOutcome): Promise<void> {
+export async function finishJob(jobId: string, outcome: JobOutcome): Promise<void> {
   await db
     .update(backgroundJobs)
     .set({ status: "error" in outcome ? "failed" : "done", result: outcome })
@@ -128,7 +152,7 @@ async function finishJob(jobId: string, outcome: JobOutcome): Promise<void> {
 
 // Fire-and-forget wrapper: whatever the work throws becomes a failed job with
 // a readable reason rather than an unhandled rejection.
-function runInBackground(jobId: string, work: () => Promise<JobOutcome>): void {
+export function runInBackground(jobId: string, work: () => Promise<JobOutcome>): void {
   work()
     .then((outcome) => finishJob(jobId, outcome))
     .catch((err) =>
@@ -198,6 +222,7 @@ instrumentsRouter.post(
   "/",
   requireAuth,
   requireRole("administrator"),
+  authoringGate,
   async (req: AuthedRequest, res) => {
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -216,6 +241,9 @@ instrumentsRouter.post(
         permittedMaterials: permittedMaterials ?? [],
         passMarkOrCompetencyRule: passMarkOrCompetencyRule ? { rule: passMarkOrCompetencyRule } : null,
         source: "manual",
+        // Dev-only route (authoringGate): no standard check runs here, so the
+        // paper is usable straight away, shown as "Not checked".
+        intakeStatus: "ready",
       })
       .returning();
     return res.status(201).json(created);
@@ -267,6 +295,34 @@ instrumentsRouter.post(
       return { instrumentId: row.id, qualityCheck: true as const };
     });
     return res.status(202).json({ jobId });
+  }
+);
+
+// Administrator override of the gate for a paper the check marked as not
+// meeting the standard. Needs a reason; recorded in the audit log.
+instrumentsRouter.post(
+  "/:id/override",
+  requireAuth,
+  requireRole("administrator"),
+  async (req: AuthedRequest, res) => {
+    const reason = String(req.body?.reason ?? "").trim();
+    if (reason.length < 10) return res.status(400).json({ error: "Give a reason for the override (at least 10 characters)." });
+    const [row] = await db.select().from(assessmentInstruments).where(eq(assessmentInstruments.id, req.params.id));
+    if (!row) return res.status(404).json({ error: "Instrument not found." });
+    if (row.intakeStatus === "checking") return res.status(400).json({ error: "Wait for the standard check to finish before overriding." });
+    const [updated] = await db
+      .update(assessmentInstruments)
+      .set({ intakeStatus: "override", intakeOverrideReason: reason })
+      .where(eq(assessmentInstruments.id, row.id))
+      .returning();
+    await db.insert(auditLog).values({
+      actorId: req.auth!.userId,
+      action: "instrument_gate_override",
+      targetType: "assessment_instrument",
+      targetId: row.id,
+      reason,
+    });
+    return res.json(updated);
   }
 );
 
@@ -330,6 +386,7 @@ instrumentsRouter.post(
   "/generate",
   requireAuth,
   requireRole("administrator"),
+  authoringGate,
   async (req: AuthedRequest, res) => {
     const parsed = generateSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -464,6 +521,7 @@ instrumentsRouter.post(
   "/generate-from-upload",
   requireAuth,
   requireRole("administrator"),
+  authoringGate,
   upload.single("document"),
   async (req: AuthedRequest, res) => {
     const parsed = generateFromUploadFieldsSchema.safeParse(req.body);
