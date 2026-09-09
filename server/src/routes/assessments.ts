@@ -26,7 +26,7 @@ import {
 import { extractPaper, PaperExtractionError } from "../ai/paperExtraction.js";
 import { generateInstrumentFromOutcomes } from "../ai/instrumentGeneration.js";
 import { extractOutcomesFromDocumentText, DocumentOutcomeExtractionError } from "../ai/documentOutcomeExtraction.js";
-import { startJob, runInBackground, setProgress, runStandardCheck, type JobOutcome } from "./instruments.js";
+import { startJob, runInBackground, setProgress, runStandardCheck, wordsProgress, type JobOutcome } from "./instruments.js";
 import type { Question } from "../types.js";
 
 // "Set up an Assessment" - four routes (docs/restructure-2026-09-05.md §2, rule of 9 Sep 2026).
@@ -92,7 +92,7 @@ async function draftSaveCheck(
       permittedMaterials: p.permittedMaterials,
       sourceDescription: p.sourceDescription,
       nqfLevel: p.qualification.nqfLevel,
-    });
+    }, wordsProgress(jobId, step.from, step.total, "Drafting questions and marking rubrics", `${p.exitLevelOutcomes.length} outcomes, ${p.assessmentCriteria.length} criteria`));
   } catch (err) {
     return { error: "The AI could not draft an assessment from these outcomes.", detail: err instanceof Error ? err.message : String(err) };
   }
@@ -117,7 +117,7 @@ async function draftSaveCheck(
 
   await setProgress(jobId, step.from + 1, step.total, "Checking the paper against the assessment standard", `${generated.questions.length} questions drafted - coverage, Bloom's demand, rubrics`);
   try {
-    await runStandardCheck(created.id);
+    await runStandardCheck(created.id, wordsProgress(jobId, step.from + 1, step.total, "Checking the paper against the assessment standard", `${generated.questions.length} questions · moderator's report`));
   } catch (err) {
     await db.update(assessmentInstruments).set({ intakeStatus: "blocked" }).where(eq(assessmentInstruments.id, created.id));
     console.error(`Standard check failed for instrument ${created.id}:`, err);
@@ -456,7 +456,7 @@ assessmentsRouter.post(
           memoText,
           paperFilename: paperFile.originalname,
           memoFilename: memoFile?.originalname,
-        });
+        }, wordsProgress(jobId, 2, totalSteps, "Reading the paper and memo", "questions, marks and memo read so far"));
       } catch (err) {
         if (err instanceof PaperExtractionError) return { error: "Could not read the paper into questions.", detail: err.message };
         throw err;
@@ -488,7 +488,7 @@ assessmentsRouter.post(
       // ---- 4. Standard check = gate ------------------------------------------------
       await setProgress(jobId, 4, totalSteps, "Checking the paper against the assessment standard", "Coverage of every outcome and criterion, Bloom's demand, marking guide quality");
       try {
-        await runStandardCheck(created.id);
+        await runStandardCheck(created.id, wordsProgress(jobId, 4, totalSteps, "Checking the paper against the assessment standard", "moderator's report"));
       } catch (err) {
         await db.update(assessmentInstruments).set({ intakeStatus: "blocked" }).where(eq(assessmentInstruments.id, created.id));
         warnings.push(`The standard check could not run (${err instanceof Error ? err.message : String(err)}). The paper is blocked until it is re-run from its page.`);

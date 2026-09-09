@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import type { PublicUser, UserRole, EmploymentRelationship } from "@shared/types";
 import { PageHeader, Card, CardHead, Notice, Badge, Empty, PlusIcon } from "../../components/ui";
-import MfaSetupPanel from "../../components/MfaSetupPanel";
+import SetupLinkPanel, { type SetupIssue } from "../../components/SetupLinkPanel";
 import type { BadgeTone } from "../../components/ui";
 
 // What the Administrator is registering. Students, assessors and invigilators
@@ -41,14 +41,13 @@ export default function AdminUsers() {
   const [users, setUsers] = useState<PublicUser[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  // Authenticator setup to show after creating (or resetting) a supervisory account.
-  const [mfaSetup, setMfaSetup] = useState<{ name: string; email: string; otpAuthUrl: string } | null>(null);
+  // The set-up link issued after registering (or re-sending for) a person.
+  const [setup, setSetup] = useState<{ name: string; email: string; issue: SetupIssue } | null>(null);
   const [showCreate, setShowCreate] = useState(false);
 
   const [type, setType] = useState<PersonType>("student");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [roles, setRoles] = useState<UserRole[]>(["learner"]);
   const [employment, setEmployment] = useState<EmploymentRelationship | "">("");
 
@@ -76,19 +75,17 @@ export default function AdminUsers() {
     setError(null);
     setMessage(null);
     try {
-      const created = await api.post<{ mfaOtpAuthUrl: string | null }>("/users", {
+      const created = await api.post<{ setup: SetupIssue }>("/users", {
         name,
         email,
-        password,
         roles,
         employmentRelationship: employment || undefined,
         source: "manual",
       });
-      setMessage(`${name} registered.`);
-      if (created.mfaOtpAuthUrl) setMfaSetup({ name, email, otpAuthUrl: created.mfaOtpAuthUrl });
+      setMessage(created.setup.emailSent ? `${name} registered — set-up link emailed to ${email}.` : `${name} registered.`);
+      setSetup({ name, email, issue: created.setup });
       setName("");
       setEmail("");
-      setPassword("");
       chooseType(type);
       setShowCreate(false);
       await loadUsers();
@@ -97,12 +94,15 @@ export default function AdminUsers() {
     }
   }
 
-  async function resetMfa(u: PublicUser) {
-    if (!window.confirm(`Issue a new authenticator setup for ${u.name}? Their current authenticator entry will stop working.`)) return;
+  async function sendSetupLink(u: PublicUser) {
+    const supervisory = !(u.roles.length === 1 && u.roles[0] === "learner");
+    if (!window.confirm(`Send ${u.name} a new set-up link? Any earlier link stops working${supervisory ? ", and their current authenticator entry will need to be set up again" : ""}.`)) return;
     setError(null);
+    setMessage(null);
     try {
-      const r = await api.post<{ mfaOtpAuthUrl: string }>(`/users/${u.id}/mfa/reset`);
-      setMfaSetup({ name: u.name, email: u.email, otpAuthUrl: r.mfaOtpAuthUrl });
+      const r = await api.post<{ setup: SetupIssue }>(`/users/${u.id}/setup-link`);
+      setMessage(r.setup.emailSent ? `Set-up link emailed to ${u.email}.` : `Set-up link ready for ${u.name}.`);
+      setSetup({ name: u.name, email: u.email, issue: r.setup });
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (err) {
       setError((err as Error).message);
@@ -125,9 +125,7 @@ export default function AdminUsers() {
 
       {error && <Notice kind="error">{error}</Notice>}
       {message && <Notice kind="success">{message}</Notice>}
-      {mfaSetup && (
-        <MfaSetupPanel name={mfaSetup.name} email={mfaSetup.email} otpAuthUrl={mfaSetup.otpAuthUrl} onClose={() => setMfaSetup(null)} />
-      )}
+      {setup && <SetupLinkPanel name={setup.name} email={setup.email} issue={setup.issue} onClose={() => setSetup(null)} />}
 
       {showCreate && (
         <Card className="mb-5">
@@ -182,13 +180,10 @@ export default function AdminUsers() {
               <p className="text-[13px] font-semibold text-ink">
                 {current.fromFptstaff ? "Not in FPTStaff yet? Add their details" : "Account details"}
               </p>
+              <p className="t-sub -mt-2">They receive a set-up link to choose their own password{type !== "student" ? " and link their authenticator app" : ""}. You never handle their password.</p>
               <div className="grid grid-cols-2 gap-3.5">
                 <div><label className="field-lbl">Full name</label><input className="inp" value={name} onChange={(e) => setName(e.target.value)} required /></div>
                 <div><label className="field-lbl">Email</label><input className="inp" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="name@fptacademy.co.za" /></div>
-                <div>
-                  <label className="field-lbl">Temporary password <span className="normal-case font-normal text-ink-faint">(min 10 characters)</span></label>
-                  <input className="inp" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={10} />
-                </div>
                 {(type === "invigilator" || type === "assessor") && (
                   <div>
                     <label className="field-lbl">Employment</label>
@@ -256,13 +251,9 @@ export default function AdminUsers() {
                       {u.source === "fptstaff" ? <Badge tone="blue">FPTStaff</Badge> : <Badge tone="gray">Added here</Badge>}
                     </td>
                     <td className="text-right">
-                      {u.roles.length === 1 && u.roles[0] === "learner" ? (
-                        <span className="t-sub">Password</span>
-                      ) : (
-                        <button type="button" className="lnk" onClick={() => resetMfa(u)}>
-                          Authenticator setup
-                        </button>
-                      )}
+                      <button type="button" className="lnk" onClick={() => sendSetupLink(u)}>
+                        Send set-up link
+                      </button>
                     </td>
                   </tr>
                 ))}

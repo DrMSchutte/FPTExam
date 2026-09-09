@@ -1,4 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
+import { createLongMessage, MODEL, type ProgressHook } from "./longCall.js";
 import type {
   Question,
   BloomLevel,
@@ -28,16 +29,7 @@ import { expectedHigherOrderShare, HIGHER_ORDER } from "./bloom.js";
 // The result is stored on the instrument (quality_review) and shown to the
 // Administrator, who decides what to change - it is advice, not a gate.
 
-const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5-20250929";
 
-let client: Anthropic | null = null;
-function getClient(): Anthropic {
-  if (!client) {
-    if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not set - required for the assessment standard check.");
-    client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  }
-  return client;
-}
 
 export interface QualityReviewInput {
   qualificationTitle: string;
@@ -176,19 +168,20 @@ ${outcomesBlock}
 THE PAPER:
 ${questionsBlock}
 
+An ELO or AC that is only a heading, preamble or general introduction with no assessable competence statement (e.g. "General introduction") is not a gap: list it with status "covered", no questions, 0 marks, and a note saying it is not assessable, so it never blocks a paper.
+
 Judge it honestly and specifically. Verdict rules: "meets_standard" only if every ELO and every AC is covered and cognitive demand is within or above the band; "meets_with_minor_gaps" if at most a few criteria are partial and demand is close to the band; otherwise "does_not_meet". Use British/South African English. Call submit_standard_check.`;
 }
 
-export async function reviewInstrumentAgainstStandard(input: QualityReviewInput): Promise<InstrumentQualityReview> {
+export async function reviewInstrumentAgainstStandard(input: QualityReviewInput, onProgress?: ProgressHook): Promise<InstrumentQualityReview> {
   const profile = profileInstrument(input.questions, input.timeAllocationMinutes, input.nqfLevel);
-  const anthropic = getClient();
-  const message = await anthropic.messages.create({
+  const message = await createLongMessage({
     model: MODEL,
     max_tokens: 20000,
     tools: [SUBMIT_TOOL],
     tool_choice: { type: "tool", name: "submit_standard_check" },
     messages: [{ role: "user", content: buildPrompt(input, profile) }],
-  });
+  }, onProgress);
   if (message.stop_reason === "max_tokens") {
     throw new Error(
       "The AI's answer was cut off before it finished (output limit reached). Try a shorter time allocation or split the paper into two instruments."
@@ -227,6 +220,17 @@ export async function reviewInstrumentAgainstStandard(input: QualityReviewInput)
     if (partial > 0 && verdict === "meets_standard") verdict = "meets_with_minor_gaps";
   }
 
+  // Deterministic time rule: under a minute per mark is not an answerable paper,
+  // whatever the AI's reading. Never a full pass at that density; the fix is
+  // stated plainly so "Fix the gaps" and the Administrator both see it.
+  const recommendations = [...(raw.recommendations ?? [])];
+  if (profile.totalMarks > input.timeAllocationMinutes) {
+    if (verdict === "meets_standard") verdict = "meets_with_minor_gaps";
+    recommendations.unshift(
+      `Time: ${profile.totalMarks} marks in ${input.timeAllocationMinutes} minutes is under a minute per mark. Extend the time allocation to at least ${Math.ceil(profile.totalMarks / 10) * 10} minutes, or reduce the paper to at most ${input.timeAllocationMinutes} marks.`
+    );
+  }
+
   return {
     verdict,
     summary: raw.summary ?? "",
@@ -234,7 +238,7 @@ export async function reviewInstrumentAgainstStandard(input: QualityReviewInput)
     coverage,
     bloomAssessment: raw.bloomAssessment ?? "",
     questionIssues: (raw.questionIssues ?? []).filter((i) => qById.has(i.questionId)),
-    recommendations: raw.recommendations ?? [],
+    recommendations,
     sourceOfOutcomes: input.sourceOfOutcomes,
     nqfLevel: input.nqfLevel,
     generatedAt: new Date().toISOString(),

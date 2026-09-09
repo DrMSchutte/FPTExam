@@ -1,0 +1,1 @@
+ALTER TABLE "assessment_instruments" ADD COLUMN "previous_questions" jsonb;

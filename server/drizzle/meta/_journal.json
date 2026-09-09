@@ -71,6 +71,20 @@
       "when": 1788939436480,
       "tag": "0009_intake_routes",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788950666180,
+      "tag": "0010_previous_questions",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788952300259,
+      "tag": "0011_account_setup_tokens",
+      "breakpoints": true
     }
   ]
 }

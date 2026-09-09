@@ -163,6 +163,21 @@ export function startJobRunner() {
       )
     )
     .catch((err) => console.error("Could not requeue orphaned jobs:", err));
+  // In-process jobs (drafting, revising, checking, reading a paper, Curricula
+  // Builder imports) cannot be resumed after a restart: mark them failed with a
+  // plain reason so the Administrator's screen stops waiting and says why, and
+  // put any paper left mid-check back to 'blocked' rather than 'checking' forever.
+  db.execute(sql`
+    UPDATE background_jobs
+       SET status = 'failed',
+           result = jsonb_build_object('error', 'The server restarted while this was running.', 'detail', 'Start it again from the assessment page.')
+     WHERE status = 'running'
+       AND job_type NOT IN ('ai_response_review', 'fptstaff_push')
+  `)
+    .then(() =>
+      db.execute(sql`UPDATE assessment_instruments SET intake_status = 'blocked' WHERE intake_status = 'checking' AND created_at < now() - interval '1 minute'`)
+    )
+    .catch((err) => console.error("Could not fail orphaned in-process jobs:", err));
   timer = setInterval(() => void tick(), POLL_MS);
   void tick();
   console.log("Background job runner started.");

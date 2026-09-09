@@ -106,6 +106,22 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// One-use, expiring links that let a newly registered person choose their own
+// password and enrol their authenticator (docs: "Register People"). Only the
+// hash of the token is stored; the link itself goes to the person by email (or
+// is copied by the Administrator when email is not connected).
+export const accountSetupTokens = pgTable("account_setup_tokens", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  tokenHash: text("token_hash").notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  createdBy: uuid("created_by").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const userRoles = pgTable(
   "user_roles",
   {
@@ -200,6 +216,9 @@ export const assessmentInstruments = pgTable("assessment_instruments", {
   intakeOverrideReason: text("intake_override_reason"),
   // For uploaded papers: the original filenames, for the audit trail.
   sourceFiles: jsonb("source_files"),
+  // The question list as it was before the last AI revision ("Fix the gaps"),
+  // so an Administrator can restore it. One step back only.
+  previousQuestions: jsonb("previous_questions"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

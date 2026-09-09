@@ -2,9 +2,10 @@ import { Router } from "express";
 import { z } from "zod";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { users, userRoles } from "../db/schema.js";
-import { verifyPassword } from "../auth/password.js";
-import { verifyMfaToken } from "../auth/mfa.js";
+import { users, userRoles, auditLog } from "../db/schema.js";
+import { verifyPassword, hashPassword } from "../auth/password.js";
+import { verifyMfaToken, buildMfaOtpAuthUrl } from "../auth/mfa.js";
+import { findLiveSetupToken, markSetupTokenUsed } from "../auth/setupLinks.js";
 import { issueSessionToken, issuePendingMfaToken, verifyPendingMfaToken } from "../auth/jwt.js";
 import type { UserRole } from "../types.js";
 
@@ -102,6 +103,45 @@ authRouter.post("/mfa/verify", async (req, res) => {
 authRouter.post("/logout", async (_req, res) => {
   res.clearCookie(COOKIE_NAME);
   res.json({ ok: true });
+});
+
+// ---- Account set-up via a one-use link (no sign-in yet) -----------------------
+
+// What the set-up page needs to show: who this is for, and the authenticator QR
+// for supervisory roles. The token in the URL is the only credential here.
+authRouter.get("/setup/:token", async (req, res) => {
+  const live = await findLiveSetupToken(req.params.token);
+  if (!live) return res.status(404).json({ error: "This set-up link is not valid any more.", detail: "It may have been used already or expired. Ask the Administrator to send a new one." });
+  const roleRows = await db.select({ role: userRoles.role }).from(userRoles).where(eq(userRoles.userId, live.user.id));
+  return res.json({
+    name: live.user.name,
+    email: live.user.email,
+    roles: roleRows.map((r) => r.role),
+    mfaOtpAuthUrl: live.user.mfaSecret ? buildMfaOtpAuthUrl(live.user.email, live.user.mfaSecret) : null,
+    expiresAt: live.token.expiresAt.toISOString(),
+  });
+});
+
+const setupSchema = z.object({
+  password: z.string().min(10, "Password must be at least 10 characters."),
+  mfaCode: z.string().regex(/^\d{6}$/).optional(),
+});
+
+// Completes set-up: the person's own password, and for supervisory roles a
+// first code from the authenticator to prove it is enrolled correctly.
+authRouter.post("/setup/:token", async (req, res) => {
+  const parsed = setupSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid request body.", detail: parsed.error.issues.map((i) => i.message).join(" ") });
+  const live = await findLiveSetupToken(req.params.token);
+  if (!live) return res.status(404).json({ error: "This set-up link is not valid any more.", detail: "Ask the Administrator to send a new one." });
+  if (live.user.mfaSecret) {
+    if (!parsed.data.mfaCode) return res.status(400).json({ error: "Enter the 6-digit code from your authenticator app to confirm it is set up." });
+    if (!verifyMfaToken(parsed.data.mfaCode, live.user.mfaSecret)) return res.status(400).json({ error: "That code is not right. Check the app shows FPT Exam and try the current code." });
+  }
+  await db.update(users).set({ passwordHash: await hashPassword(parsed.data.password) }).where(eq(users.id, live.user.id));
+  await markSetupTokenUsed(live.token.id);
+  await db.insert(auditLog).values({ actorId: live.user.id, action: "account_setup_completed", targetType: "user", targetId: live.user.id });
+  return res.json({ ok: true, email: live.user.email });
 });
 
 function publicUser(user: typeof users.$inferSelect, roles: UserRole[]) {

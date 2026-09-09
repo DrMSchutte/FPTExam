@@ -1,4 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
+import { createLongMessage, MODEL, type ProgressHook } from "./longCall.js";
 import { randomUUID } from "node:crypto";
 import type { Question, QuestionType, BloomLevel } from "../types.js";
 
@@ -13,17 +14,8 @@ import type { Question, QuestionType, BloomLevel } from "../types.js";
 // paper states them. Nothing is invented: a question whose memo is missing is
 // returned with an empty rubric and flagged, so the Administrator sees it.
 
-const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5-20250929";
 const MAX_CHARS = 180_000; // ~45k tokens of document text - a long paper + memo fits comfortably
 
-let client: Anthropic | null = null;
-function getClient(): Anthropic {
-  if (!client) {
-    if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not set - required to read an uploaded paper.");
-    client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  }
-  return client;
-}
 
 export class PaperExtractionError extends Error {}
 
@@ -118,18 +110,17 @@ ${clip(input.paperText, input.memoText ? MAX_CHARS / 2 : MAX_CHARS)}${memoBlock}
 Call submit_extracted_paper with every question in order.`;
 }
 
-export async function extractPaper(input: PaperExtractionInput): Promise<ExtractedPaper> {
+export async function extractPaper(input: PaperExtractionInput, onProgress?: ProgressHook): Promise<ExtractedPaper> {
   if (input.paperText.trim().length < 200) {
     throw new PaperExtractionError("The uploaded paper has almost no readable text. If it is a scanned PDF, it needs OCR first.");
   }
-  const anthropic = getClient();
-  const message = await anthropic.messages.create({
+  const message = await createLongMessage({
     model: MODEL,
     max_tokens: 20000,
     tools: [SUBMIT_TOOL],
     tool_choice: { type: "tool", name: "submit_extracted_paper" },
     messages: [{ role: "user", content: buildPrompt(input) }],
-  });
+  }, onProgress);
   if (message.stop_reason === "max_tokens") {
     throw new PaperExtractionError("The paper is too long to read in one pass - split it into sections and upload each as its own paper.");
   }

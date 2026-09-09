@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import Login from "./routes/Login";
+import AccountSetup from "./routes/AccountSetup";
 import { ProtectedRoute } from "./lib/ProtectedRoute";
 import { useAuth } from "./lib/auth";
 import AdminDashboard from "./routes/admin/AdminDashboard";
@@ -37,6 +38,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/setup/:token" element={<AccountSetup />} />
       <Route path="/" element={<Home />} />
       <Route
         path="/admin/*"

@@ -142,6 +142,7 @@ export interface AssessmentInstrument {
   intakeStatus: IntakeStatus;
   intakeOverrideReason: string | null;
   sourceFiles: string[] | null;
+  previousQuestions: Question[] | null;
   createdAt: string;
 }
 

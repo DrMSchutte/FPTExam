@@ -4,6 +4,8 @@ import { api, pollJob } from "../../lib/api";
 import type { AssessmentInstrument, Qualification, JobProgress, BloomLevel, InstrumentQualityReview, Question } from "@shared/types";
 import { PageHeader, Card, CardHead, Notice, Badge, TypePill, Empty } from "../../components/ui";
 import JobProgressPanel, { CHECK_STAGES } from "../../components/JobProgressPanel";
+
+const FIX_STAGES = ["Revising the paper to close the gaps", "Checking the revised paper against the standard", "Saved"];
 import { BLOOM_ORDER, BLOOM_LABEL, BloomBadge, VerdictBadge, CoverageDot } from "../../components/standard";
 import { GateBadge, RouteBadge, sourceWord, routeMeta } from "../../components/intake";
 
@@ -105,6 +107,8 @@ export default function AdminInstrumentDetail() {
   const [draftTime, setDraftTime] = useState("");
   const [draftRule, setDraftRule] = useState("");
   const [saving, setSaving] = useState(false);
+  const [fixing, setFixing] = useState(false);
+  const [fixNotes, setFixNotes] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -147,6 +151,51 @@ export default function AdminInstrumentDetail() {
       await load();
     } catch (err) {
       setError((err as Error).message);
+    }
+  }
+
+  async function fixGaps() {
+    if (!id) return;
+    setError(null);
+    setMessage(null);
+    setFixNotes(null);
+    setProgress(null);
+    setFixing(true);
+    try {
+      const { jobId } = await api.post<{ jobId: string }>(`/instruments/${id}/fix-gaps`);
+      const done = await pollJob<{ instrument: AssessmentInstrument; coverageNotes: string }>(`/instruments/jobs/${jobId}`, { onProgress: setProgress });
+      setFixNotes(done.coverageNotes || null);
+      const v = done.instrument.qualityReview?.verdict;
+      setMessage(
+        v === "meets_standard"
+          ? "The paper now meets the assessment standard and is ready to schedule."
+          : v === "meets_with_minor_gaps"
+            ? "The paper now meets the standard with minor gaps and is ready to schedule. The remaining notes are below."
+            : "The paper was revised but still does not meet the standard. The notes below say what remains and what to do about it."
+      );
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setFixing(false);
+    }
+  }
+
+  async function restorePrevious() {
+    if (!id) return;
+    setError(null);
+    setMessage(null);
+    setFixNotes(null);
+    setChecking(true);
+    try {
+      const { jobId } = await api.post<{ jobId: string }>(`/instruments/${id}/restore-previous`);
+      await pollJob(`/instruments/jobs/${jobId}`, { onProgress: setProgress });
+      setMessage("The previous version of the paper is back and has been re-checked.");
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setChecking(false);
     }
   }
 
@@ -272,6 +321,19 @@ export default function AdminInstrumentDetail() {
       {error && <Notice kind="error">{error}</Notice>}
       {message && <Notice kind="success">{message}</Notice>}
       <JobProgressPanel title="Assessment-standard check" stages={CHECK_STAGES} progress={progress} active={checking} />
+      <JobProgressPanel title="Fixing the gaps — the AI revises the paper, then the check runs again" stages={FIX_STAGES} progress={progress} active={fixing} />
+      {fixNotes && (
+        <div className="mt-4 rounded-lg border border-brand-100 bg-brand-50/40 p-3.5 text-[13px] whitespace-pre-wrap">
+          <p className="font-semibold mb-1">What the revision changed</p>
+          {plain(fixNotes)}
+        </div>
+      )}
+      {instrument.previousQuestions && !fixing && !checking && (
+        <p className="t-sub mt-3">
+          This paper was revised by the AI.{" "}
+          <button type="button" className="lnk" onClick={restorePrevious}>Restore the previous version</button>
+        </p>
+      )}
 
       {instrument.intakeStatus === "blocked" && (
         <Card className="mt-5 border-amber-200">
@@ -298,9 +360,16 @@ export default function AdminInstrumentDetail() {
               )}
             </div>
             {!overriding && (
-              <button type="button" className="btn-ghost whitespace-nowrap" onClick={() => setOverriding(true)}>
-                Override with a reason
-              </button>
+              <div className="flex flex-col items-stretch gap-2 shrink-0">
+                {editable && review && (
+                  <button type="button" className="btn whitespace-nowrap" onClick={fixGaps} disabled={fixing || checking}>
+                    {fixing ? "Fixing…" : "Fix the gaps with AI"}
+                  </button>
+                )}
+                <button type="button" className="btn-ghost whitespace-nowrap" onClick={() => setOverriding(true)}>
+                  Override with a reason
+                </button>
+              </div>
             )}
           </div>
         </Card>
@@ -344,6 +413,14 @@ export default function AdminInstrumentDetail() {
               </div>
               <div className="border-l border-line pl-5">
                 <p className="text-sm">{plain(review.summary)}</p>
+                {review.verdict === "meets_with_minor_gaps" && editable && (
+                  <p className="mt-2 text-[13px]">
+                    Ready to schedule as it is.{" "}
+                    <button type="button" className="lnk" onClick={fixGaps} disabled={fixing || checking}>
+                      Close the remaining gaps with AI
+                    </button>
+                  </p>
+                )}
                 <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-[13px] tabular">
                   <span>
                     <strong>{covered}</strong>/{review.coverage.length} outcomes & criteria covered

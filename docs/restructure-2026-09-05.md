@@ -42,6 +42,16 @@ Whatever the route, the paper goes through the same standard check and gate belo
 it can be scheduled, and the same proctored sitting, AI-assessed / assessor-endorsed
 marking, and Results hand-over afterwards.
 
+### Fixing a paper that fails the check (added 9 Sep 2026)
+A blocked paper is not a dead end. On its page the Administrator has three ways out, in
+this order: **Fix the gaps with AI** — the AI revises the paper against the moderator's
+findings (covers every missing outcome and criterion, labels and lifts cognitive demand
+to the NQF band, fixes flagged questions, stays within the time allocation), keeps the
+questions that already work, then the check runs again (up to two rounds); the previous
+version is kept and can be restored. **Edit the questions** by hand — the check re-runs on
+save. **Override with a reason** — audited. Curricula Builder papers get none of these:
+they are corrected at their source and pulled again.
+
 ### Every sitting is proctored (decision 8 Sep 2026)
 FPT Exam is a QCTO proctored exam site to the QCTO requirement. There is no unproctored,
 "just exam" or practice mode and no per-assessment supervision setting — a sitting on FPT
@@ -57,12 +67,19 @@ with a reason** (status `override`, reason in the audit log). Only `ready`/`over
 papers appear in the sitting picker.
 
 ### Register People
-Unchanged in substance: pulled from FPTStaff by section (students / assessors /
-invigilators), role pre-filled, manual "add new" until FPTStaff is connected (pushed back
-with duplicate guard). The exam site holds name, email, role, FPTStaff reference, and for
-supervisory roles the login and authenticator secret. No ID numbers in the clear, no
-addresses, contracts or HR data. (Learner one-time sitting codes instead of passwords:
-Phase D, with the pre-check/consent flow.)
+Pulled from FPTStaff by section (students / assessors / invigilators), role pre-filled,
+manual "add new" until FPTStaff is connected (pushed back with duplicate guard). The exam
+site holds name, email, role, FPTStaff reference, and for supervisory roles the login and
+authenticator secret. No ID numbers in the clear, no addresses, contracts or HR data.
+
+**Sign-in set-up (added 9 Sep 2026).** The Administrator never handles anyone's password.
+Registering a person issues a one-use **set-up link** (48 hours) that is emailed to them
+when email is connected (SMTP secrets) and otherwise shown to the Administrator to send.
+On that page the person chooses their own password and, for a supervisory role, scans the
+authenticator QR code and confirms it with a first code. The secret never travels in an
+email. "Send set-up link" on a person's row re-issues it — and, for supervisory roles, a
+new authenticator secret (lost-phone recovery). (Learner one-time sitting codes for the
+exam itself: Phase D, with the pre-check/consent flow.)
 
 ### Schedule the Sitting
 Unchanged: paper + window + assessor + invigilators + learners. Picker filtered by the gate.
@@ -85,7 +102,7 @@ release event. Moderation/verification: FPTStaff.
 | Held | How long | Notes |
 |---|---|---|
 | Structured paper + rubric | While the paper is live; archive after | Rubric never sent to a learner browser; paper served question-by-question in session |
-| People: name, email, role, FPTStaff ref, supervisory login + MFA secret | While active | No ID numbers in clear (hash only if identity check needs it) |
+| People: name, email, role, FPTStaff ref, supervisory login + MFA secret | While active | Learner ID number and unique student number (decision 9 Sep 2026: required on the Statement of Results) stored **encrypted**, masked on screen, printed in full only on the Statement; captured at registration, pulled from FPTStaff once connected |
 | Exam record: session, answers, marks, feedback, outcome, sign-off, audit | Permanent | Seal hash on submission makes it tamper-evident |
 | Proctoring evidence (captures, recordings, incidents) | 12 months after the sitting, then auto-delete; hold flag for appeals/investigations | Learner may view their own; never leaves FPT Exam; window stated in consent text |
 | QA process, full profiles, payments, contracts | Never | Lives in FPTStaff |
@@ -99,7 +116,9 @@ release event. Moderation/verification: FPTStaff.
    Builder exposes it.
 3. Phase D — proctoring (pre-checks, consent, capture loop, seal/hash, Invigilator
    console, Integrity engine, R2, retention sweep), learner one-time sitting codes,
-   assessor email notifications.
+   assessor email notifications, **Statement of Results** (branded PDF for the learner with
+   ID number + student number, sitting details, integrity summary, assessor sign-off; also
+   sent to FPTStaff with the result) and the result-released email to the learner.
 4. Phase E — FPTStaff connection (people pull/push, result push delivery).
 5. Phase F — Curricula Builder connection live (the QCTO and "other courses" routes
    become usable; until then no QCTO paper can enter FPT Exam, by design).

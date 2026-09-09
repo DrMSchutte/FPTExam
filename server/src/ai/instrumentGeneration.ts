@@ -1,20 +1,10 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
+import { createLongMessage, MODEL, type ProgressHook } from "./longCall.js";
 import { randomUUID } from "node:crypto";
 import type { Question, QuestionType, BloomLevel } from "../types.js";
 import { bloomGuidanceForNqf } from "./bloom.js";
 
-const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5-20250929";
 
-let client: Anthropic | null = null;
-function getClient(): Anthropic {
-  if (!client) {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      throw new Error("ANTHROPIC_API_KEY is not set - required for AI instrument generation.");
-    }
-    client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  }
-  return client;
-}
 
 export interface GenerateInstrumentInput {
   qualificationTitle: string;
@@ -129,17 +119,17 @@ Write a real model answer or rubric for every question - this is what an Assesso
 // (pass a sourceDescription describing that instead). Kept under its
 // original name for the existing SAQA call site; genuinely source-agnostic.
 export async function generateInstrumentFromSaqa(
-  input: GenerateInstrumentInput
+  input: GenerateInstrumentInput,
+  onProgress?: ProgressHook
 ): Promise<GeneratedInstrument> {
-  const anthropic = getClient();
 
-  const message = await anthropic.messages.create({
+  const message = await createLongMessage({
     model: MODEL,
     max_tokens: 20000,
     tools: [SUBMIT_TOOL],
     tool_choice: { type: "tool", name: "submit_instrument" },
     messages: [{ role: "user", content: buildPrompt(input) }],
-  });
+  }, onProgress);
 
   if (message.stop_reason === "max_tokens") {
     throw new Error(

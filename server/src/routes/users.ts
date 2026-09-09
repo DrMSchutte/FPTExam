@@ -4,7 +4,9 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { users, userRoles, auditLog } from "../db/schema.js";
 import { hashPassword } from "../auth/password.js";
+import { randomBytes } from "node:crypto";
 import { generateMfaSecret, buildMfaOtpAuthUrl } from "../auth/mfa.js";
+import { issueSetupLink, appBaseUrl } from "../auth/setupLinks.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
 import type { UserRole } from "../types.js";
 
@@ -19,7 +21,9 @@ const ROLE_VALUES = ["administrator", "learner", "invigilator", "assessor"] as c
 const createUserSchema = z.object({
   name: z.string().min(1),
   email: z.string().email(),
-  password: z.string().min(10, "Password must be at least 10 characters."),
+  // Optional: normally the person chooses their own password through the
+  // set-up link they are sent. An Administrator may still set one directly.
+  password: z.string().min(10, "Password must be at least 10 characters.").optional(),
   roles: z.array(z.enum(ROLE_VALUES)).min(1),
   employmentRelationship: z.enum(["internal", "external"]).optional(),
   // FPTStaff hooks. Until FPTStaff is connected every registration is
@@ -58,7 +62,9 @@ usersRouter.post(
       });
     }
 
-    const passwordHash = await hashPassword(password);
+    // No password given: an unguessable placeholder until the person sets theirs
+    // through the set-up link. They cannot sign in before then.
+    const passwordHash = await hashPassword(password ?? randomBytes(32).toString("base64url"));
     const mfaSecret = roles.includes("learner") && roles.length === 1 ? null : generateMfaSecret();
 
     const [created] = await db
@@ -83,12 +89,17 @@ usersRouter.post(
       targetId: created.id,
     });
 
+    // The set-up link: emailed when email is connected, otherwise handed back
+    // for the Administrator to send. Either way it is the person's way in.
+    const setup = await issueSetupLink({ userId: created.id, name, email, roles, createdBy: req.auth!.userId, baseUrl: appBaseUrl(req) });
+
     return res.status(201).json({
       id: created.id,
       name: created.name,
       email: created.email,
       roles,
       mfaOtpAuthUrl: mfaSecret ? buildMfaOtpAuthUrl(email, mfaSecret) : null,
+      setup,
     });
   }
 );
@@ -130,6 +141,29 @@ usersRouter.get("/me", requireAuth, async (req: AuthedRequest, res) => {
     fptstaffId: u.fptstaffId,
     createdAt: u.createdAt.toISOString(),
   });
+});
+
+// Sends (or re-sends) the set-up link: a fresh one-use link that lets the person
+// choose a password and enrol their authenticator. Also the recovery path when a
+// phone is lost - a new authenticator secret is issued for supervisory roles.
+usersRouter.post("/:id/setup-link", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
+  const [user] = await db.select().from(users).where(eq(users.id, req.params.id));
+  if (!user) return res.status(404).json({ error: "User not found." });
+  const roleRows = await db.select({ role: userRoles.role }).from(userRoles).where(eq(userRoles.userId, user.id));
+  const roles = roleRows.map((r) => r.role as UserRole);
+  const supervisory = !(roles.length === 1 && roles[0] === "learner");
+  if (supervisory) {
+    await db.update(users).set({ mfaSecret: generateMfaSecret() }).where(eq(users.id, user.id));
+  }
+  const setup = await issueSetupLink({ userId: user.id, name: user.name, email: user.email, roles, createdBy: req.auth!.userId, baseUrl: appBaseUrl(req) });
+  await db.insert(auditLog).values({
+    actorId: req.auth!.userId,
+    action: "user_setup_link_sent",
+    targetType: "user",
+    targetId: user.id,
+    reason: setup.emailSent ? "emailed" : "shown to administrator (email not connected)",
+  });
+  return res.json({ id: user.id, name: user.name, email: user.email, setup });
 });
 
 // Authenticator (MFA) setup for a supervisory account. Every Administrator,

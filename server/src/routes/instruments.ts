@@ -12,6 +12,12 @@ import {
 } from "../db/schema.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
 import { reviewInstrumentAgainstStandard } from "../ai/instrumentQualityReview.js";
+import { reviseInstrumentToStandard, markLimit } from "../ai/instrumentRevision.js";
+import type { ProgressHook } from "../ai/longCall.js";
+
+// Progress detail for a streamed AI call: "…about 1,400 words written so far".
+export const wordsProgress = (jobId: string, step: number, total: number, label: string, prefix?: string): ProgressHook =>
+  ({ words }) => setProgress(jobId, step, total, label, `${prefix ? prefix + " · " : ""}about ${words.toLocaleString("en-ZA")} words written so far`);
 import type { Question, InstrumentQualityReview } from "../types.js";
 
 export const instrumentsRouter = Router();
@@ -49,11 +55,10 @@ export async function setProgress(jobId: string, step: number, totalSteps: numbe
 
 // Runs the assessment-standard check for an instrument and stores it on the
 // row. Shared by the generation paths (final stage) and the re-run endpoint.
-export async function runStandardCheck(instrumentId: string): Promise<InstrumentQualityReview> {
-  const [instrument] = await db.select().from(assessmentInstruments).where(eq(assessmentInstruments.id, instrumentId));
-  if (!instrument) throw new Error("Instrument not found.");
+// The reference list a paper is measured against: the outcomes and criteria
+// from wherever it came (SAQA record, uploaded document, typed, Curricula Builder).
+export async function outcomesForInstrument(instrument: typeof assessmentInstruments.$inferSelect) {
   const [qualification] = await db.select().from(qualifications).where(eq(qualifications.id, instrument.qualificationId));
-
   let exitLevelOutcomes: string[] = [];
   let assessmentCriteria: string[] = [];
   let sourceOfOutcomes: "saqa" | "qcto_upload" | "own_outcomes" | "curricula_builder" | "paper_only" = "paper_only";
@@ -78,6 +83,13 @@ export async function runStandardCheck(instrumentId: string): Promise<Instrument
           : "qcto_upload";
     }
   }
+  return { qualification, exitLevelOutcomes, assessmentCriteria, sourceOfOutcomes, nqfLevel };
+}
+
+export async function runStandardCheck(instrumentId: string, onProgress?: ProgressHook): Promise<InstrumentQualityReview> {
+  const [instrument] = await db.select().from(assessmentInstruments).where(eq(assessmentInstruments.id, instrumentId));
+  if (!instrument) throw new Error("Instrument not found.");
+  const { qualification, exitLevelOutcomes, assessmentCriteria, sourceOfOutcomes, nqfLevel } = await outcomesForInstrument(instrument);
 
   const review = await reviewInstrumentAgainstStandard({
     qualificationTitle: qualification.title,
@@ -89,7 +101,7 @@ export async function runStandardCheck(instrumentId: string): Promise<Instrument
     questions: instrument.questions as Question[],
     timeAllocationMinutes: instrument.timeAllocationMinutes,
     passRule: (instrument.passMarkOrCompetencyRule as { rule?: string } | null)?.rule ?? "",
-  });
+  }, onProgress);
   // The check is the gate (docs/restructure-2026-09-05.md §2): a paper that
   // does not meet the standard is blocked from sittings until fixed or
   // overridden with a reason. An existing override is left alone.
@@ -270,8 +282,135 @@ instrumentsRouter.post(
     runInBackground(jobId, async () => {
       await setProgress(jobId, 1, 2, "Checking the paper against the assessment standard", "Coverage of every outcome and criterion, Bloom's demand, rubric quality");
       try {
+        await runStandardCheck(row.id, wordsProgress(jobId, 1, 2, "Checking the paper against the assessment standard", "moderator's report"));
+      } catch (err) {
+        return { error: "The assessment-standard check failed.", detail: err instanceof Error ? err.message : String(err) };
+      }
+      await setProgress(jobId, 2, 2, "Saved");
+      return { instrumentId: row.id, qualityCheck: true as const };
+    });
+    return res.status(202).json({ jobId });
+  }
+);
+
+// "Fix the gaps": the AI revises a paper drafted here so that it meets the
+// standard the check measured it against, then the check runs again. Up to two
+// rounds. The previous question list is kept so the Administrator can restore it.
+// Not for Curricula Builder papers - those are corrected at their source.
+instrumentsRouter.post(
+  "/:id/fix-gaps",
+  requireAuth,
+  requireRole("administrator"),
+  async (req: AuthedRequest, res) => {
+    const [row] = await db.select().from(assessmentInstruments).where(eq(assessmentInstruments.id, req.params.id));
+    if (!row) return res.status(404).json({ error: "Instrument not found." });
+    if (row.intakeRoute === "qcto_curricula_builder" || row.intakeRoute === "curricula_builder_other") {
+      return res.status(409).json({ error: "This paper is linked in from Curricula Builder and is not revised here.", detail: "Correct it on Curricula Builder and pull the new version." });
+    }
+    if (row.intakeStatus === "checking") return res.status(400).json({ error: "Wait for the current standard check to finish." });
+    const actorId = req.auth!.userId;
+    const total = 3;
+    const jobId = await startJob("ai_instrument_fix_gaps", { instrumentId: row.id });
+
+    runInBackground(jobId, async () => {
+      let current = row;
+      let review = (current.qualityReview ?? null) as InstrumentQualityReview | null;
+      if (!review) {
+        await setProgress(jobId, 1, total, "Checking the paper against the assessment standard first");
+        review = await runStandardCheck(current.id);
+        [current] = await db.select().from(assessmentInstruments).where(eq(assessmentInstruments.id, current.id));
+      }
+      if (review.verdict === "meets_standard") {
+        await setProgress(jobId, total, total, "Saved");
+        return { instrumentId: current.id, questionCount: (current.questions as Question[]).length, coverageNotes: "The paper already meets the standard - nothing to fix." };
+      }
+
+      // One revision, one re-check. A second automatic round tends to oscillate on a
+      // paper whose outcomes genuinely do not fit its time allocation; the
+      // Administrator decides what happens next from the report.
+      const gaps = review.coverage.filter((c) => c.status !== "covered").length;
+      await setProgress(jobId, 1, total, "Revising the paper to close the gaps", `${gaps} outcomes/criteria not fully covered · higher-order share ${review.profile.higherOrderMarkShare}%`);
+      const ctx = await outcomesForInstrument(current);
+      const revised = await reviseInstrumentToStandard({
+        qualificationTitle: ctx.qualification.title,
+        qctoRegistrationType: ctx.qualification.qctoRegistrationType,
+        nqfLevel: ctx.nqfLevel,
+        exitLevelOutcomes: ctx.exitLevelOutcomes,
+        assessmentCriteria: ctx.assessmentCriteria,
+        timeAllocationMinutes: current.timeAllocationMinutes,
+        permittedMaterials: (current.permittedMaterials as string[]) ?? [],
+        questions: current.questions as Question[],
+        review,
+        passRule: (current.passMarkOrCompetencyRule as { rule?: string } | null)?.rule ?? "",
+      }, wordsProgress(jobId, 1, total, "Revising the paper to close the gaps", "rewriting and adding questions"));
+      [current] = await db
+        .update(assessmentInstruments)
+        .set({
+          previousQuestions: current.questions,
+          questions: revised.questions,
+          passMarkOrCompetencyRule: { rule: revised.passMarkOrCompetencyRule },
+          intakeStatus: current.intakeStatus === "override" ? "override" : "checking",
+        })
+        .where(eq(assessmentInstruments.id, current.id))
+        .returning();
+      await db.insert(auditLog).values({
+        actorId,
+        action: "instrument_ai_revised",
+        targetType: "assessment_instrument",
+        targetId: current.id,
+        reason: `kept ${revised.kept}, replaced ${revised.replaced}, added ${revised.added}`,
+      });
+      const marks = revised.questions.reduce((s, q) => s + q.maxMark, 0);
+
+      await setProgress(jobId, 2, total, "Checking the revised paper against the standard", `${revised.questions.length} questions, ${marks} marks`);
+      try {
+        review = await runStandardCheck(current.id, wordsProgress(jobId, 2, total, "Checking the revised paper against the standard", "moderator's report"));
+      } catch (err) {
+        await db.update(assessmentInstruments).set({ intakeStatus: "blocked" }).where(eq(assessmentInstruments.id, current.id));
+        return { error: "The paper was revised but the standard check failed.", detail: err instanceof Error ? err.message : String(err) };
+      }
+
+      const notes = [`Kept ${revised.kept}, replaced ${revised.replaced}, added ${revised.added}. ${revised.changeSummary}`];
+      const stillGaps = review.coverage.filter((c) => c.status !== "covered").length;
+      if (review.verdict === "does_not_meet") {
+        const elos = ctx.exitLevelOutcomes.length;
+        notes.push(
+          `Still not meeting the standard after revision: ${stillGaps} outcomes/criteria not fully covered.` +
+            (marks >= markLimit(current.timeAllocationMinutes) * 0.95 && elos >= 12
+              ? ` This qualification has ${elos} exit level outcomes and the paper is already at the mark ceiling for ${current.timeAllocationMinutes} minutes - they do not all fit with depth. Consider extending the time allocation (edit it under Questions, then run Fix the gaps again), splitting into two papers, or overriding with a reason if the coverage is acceptable for this sitting.`
+              : ` Run Fix the gaps again, edit the questions, or override with a reason.`)
+        );
+      }
+      await setProgress(jobId, total, total, "Saved");
+      const [final] = await db.select().from(assessmentInstruments).where(eq(assessmentInstruments.id, current.id));
+      return { instrumentId: final.id, questionCount: (final.questions as Question[]).length, coverageNotes: notes.join("\n\n") };
+    });
+
+    return res.status(202).json({ jobId });
+  }
+);
+
+// Puts back the question list from before the last "Fix the gaps" run, then re-checks.
+instrumentsRouter.post(
+  "/:id/restore-previous",
+  requireAuth,
+  requireRole("administrator"),
+  async (req: AuthedRequest, res) => {
+    const [row] = await db.select().from(assessmentInstruments).where(eq(assessmentInstruments.id, req.params.id));
+    if (!row) return res.status(404).json({ error: "Instrument not found." });
+    if (!row.previousQuestions) return res.status(400).json({ error: "There is no previous version to restore." });
+    await db
+      .update(assessmentInstruments)
+      .set({ questions: row.previousQuestions, previousQuestions: null, intakeStatus: row.intakeStatus === "override" ? "override" : "checking" })
+      .where(eq(assessmentInstruments.id, row.id));
+    await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "instrument_restored_previous", targetType: "assessment_instrument", targetId: row.id, reason: "restored the question list from before the AI revision" });
+    const jobId = await startJob("ai_instrument_quality_check", { instrumentId: row.id, reason: "restored" });
+    runInBackground(jobId, async () => {
+      await setProgress(jobId, 1, 2, "Checking the restored paper against the assessment standard");
+      try {
         await runStandardCheck(row.id);
       } catch (err) {
+        await db.update(assessmentInstruments).set({ intakeStatus: "blocked" }).where(eq(assessmentInstruments.id, row.id));
         return { error: "The assessment-standard check failed.", detail: err instanceof Error ? err.message : String(err) };
       }
       await setProgress(jobId, 2, 2, "Saved");

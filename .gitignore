@@ -4,3 +4,7 @@ build
 .env
 *.log
 .DS_Store
+
+# The Claude desktop app writes session outputs (screenshots etc.) here; not part of the app.
+Claude outputs/
+*.bundle
