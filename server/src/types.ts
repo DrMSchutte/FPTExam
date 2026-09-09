@@ -72,6 +72,8 @@ export type CoverageStatus = "covered" | "partial" | "not_covered";
 export type StandardVerdict = "meets_standard" | "meets_with_minor_gaps" | "does_not_meet";
 // Gate on the way into use: only ready/override papers can be scheduled.
 export type IntakeStatus = "checking" | "ready" | "blocked" | "override";
+export type IntakeRoute = "qcto_curricula_builder" | "legacy_saqa" | "built_here" | "curricula_builder_other";
+export type QctoRegistrationType = "fisa" | "eisa" | "non_qcto";
 
 export interface CoverageEntry {
   kind: "elo" | "ac";
@@ -110,7 +112,7 @@ export interface InstrumentQualityReview {
   bloomAssessment: string; // AI's view of cognitive demand vs the NQF level
   questionIssues: QuestionAlignmentIssue[];
   recommendations: string[];
-  sourceOfOutcomes: "saqa" | "qcto_upload" | "paper_only";
+  sourceOfOutcomes: "saqa" | "qcto_upload" | "own_outcomes" | "curricula_builder" | "paper_only";
   nqfLevel: number | null;
   generatedAt: string;
   model: string;

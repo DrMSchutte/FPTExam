@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import type { Qualification, AssessmentInstrument, ExamSitting, PublicUser } from "@shared/types";
-import { PageHeader, Card, CardHead, Badge, Empty } from "../../components/ui";
+import { PageHeader, Card, CardHead, Badge, Empty, typeWord } from "../../components/ui";
 
 interface Data {
   qualifications: Qualification[];
@@ -40,6 +40,7 @@ export default function AdminOverview() {
   const count = (role: string) => data?.users.filter((u) => u.roles.includes(role as never)).length ?? 0;
   const eisa = data?.qualifications.filter((q) => q.qctoRegistrationType === "eisa").length ?? 0;
   const fisa = data?.qualifications.filter((q) => q.qctoRegistrationType === "fisa").length ?? 0;
+  const nonQcto = data?.qualifications.filter((q) => q.qctoRegistrationType === "non_qcto").length ?? 0;
   const ready = data?.instruments.filter((i) => i.intakeStatus === "ready" || i.intakeStatus === "override").length ?? 0;
   const blocked = data?.instruments.filter((i) => i.intakeStatus === "blocked").length ?? 0;
 
@@ -54,7 +55,7 @@ export default function AdminOverview() {
     {
       label: "Qualifications",
       value: data?.qualifications.length,
-      sub: `${eisa} EISA · ${fisa} FISA`,
+      sub: `${eisa} EISA · ${fisa} FISA${nonQcto ? ` · ${nonQcto} non-QCTO` : ""}`,
       tone: "bg-blue-50 text-blue-700",
       icon: <path d="M22 10v6M2 10l10-5 10 5-10 5zM6 12v5c3 3 9 3 12 0v-5" />,
     },
@@ -117,7 +118,7 @@ export default function AdminOverview() {
                   <tr key={s.id}>
                     <td>
                       <div className="font-semibold">{qualTitle(s.qualificationId)}</div>
-                      <div className="t-sub">{data?.qualifications.find((q) => q.id === s.qualificationId)?.qctoRegistrationType.toUpperCase()}</div>
+                      <div className="t-sub">{typeWord(data?.qualifications.find((q) => q.id === s.qualificationId)?.qctoRegistrationType)}</div>
                     </td>
                     <td>
                       {fmtDate(s.startTime)}
@@ -145,7 +146,7 @@ export default function AdminOverview() {
         <CardHead title="Setting up an exam" subtitle="Three steps, in this order" />
         <div className="grid grid-cols-3">
           {[
-            ["Set up an Assessment", "Upload the paper and its memo (or link it from Curricula Builder). It is checked against the assessment standard before it can be used."],
+            ["Set up an Assessment", "Say what kind of assessment it is: a QCTO paper is linked in from Curricula Builder, a legacy FISA is drafted from SAQA, anything outside the QCTO rules is built here. Every paper is checked against the assessment standard before it can be used."],
             ["Register People", "Assessor, invigilators and learners — pulled from FPTStaff once connected, added here until then."],
             ["Schedule the Sitting", "Pick the assessment, the window, the assessor and invigilators, and assign the learners."],
           ].map(([t, d], i) => (

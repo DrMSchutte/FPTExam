@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
-import { PageHeader, Card, CardHead, Notice, Badge, Pill, Empty } from "../../components/ui";
+import { PageHeader, Card, CardHead, Notice, Badge, TypePill, Empty } from "../../components/ui";
+import type { IntakeRoute } from "@shared/types";
+import { RouteBadge } from "../../components/intake";
 
 interface ResultRow {
   sessionId: string;
   learnerName: string;
   learnerEmail: string;
   qualificationTitle: string;
-  qctoRegistrationType: "fisa" | "eisa";
+  qctoRegistrationType: "fisa" | "eisa" | "non_qcto";
+  intakeRoute: IntakeRoute;
   instrumentVersion: string;
   sittingStart: string;
   outcome: "competent" | "not_yet_competent" | null;
@@ -91,10 +94,10 @@ export default function AdminResults() {
                   </td>
                   <td>
                     <div className="flex items-center gap-2">
-                      <Pill tone={r.qctoRegistrationType}>{r.qctoRegistrationType.toUpperCase()}</Pill>
+                      <TypePill type={r.qctoRegistrationType} />
                       <span>{r.qualificationTitle}</span>
                     </div>
-                    <p className="t-sub">Paper {r.instrumentVersion}</p>
+                    <p className="t-sub">Paper {r.instrumentVersion} · <RouteBadge route={r.intakeRoute} small /></p>
                   </td>
                   <td className="whitespace-nowrap">{fmt(r.sittingStart)}</td>
                   <td>

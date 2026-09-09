@@ -66,17 +66,4 @@ export default function JobProgressPanel({
   );
 }
 
-export const DRAFT_STAGES_SAQA = [
-  "Fetching the SAQA record",
-  "Extracting outcomes and criteria",
-  "Drafting questions and marking rubrics",
-  "Checking the paper against the assessment standard",
-  "Saved",
-];
-export const DRAFT_STAGES_UPLOAD = [
-  "Reading outcomes and criteria from the document",
-  "Drafting questions and marking rubrics",
-  "Checking the paper against the assessment standard",
-  "Saved",
-];
 export const CHECK_STAGES = ["Checking the paper against the assessment standard", "Saved"];

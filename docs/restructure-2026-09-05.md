@@ -7,10 +7,11 @@ phases) stands.
 
 ## 1. What FPT Exam is for
 
-FPT Exam runs, records, marks and releases secure exams. It does **not** author papers,
-does not hold the QA process, and does not hold people's full profiles. Papers come from
-Curricula Builder (or an uploaded document); people come from FPTStaff; the QA process
-(moderation, verification, certification) runs in FPTStaff off the result FPT Exam pushes.
+FPT Exam runs, records, marks and releases secure exams. It does **not** author QCTO
+papers, does not hold the QA process, and does not hold people's full profiles. QCTO
+papers come from Curricula Builder; non-QCTO assessments may be drafted here (see §2);
+people come from FPTStaff; the QA process (moderation, verification, certification) runs
+in FPTStaff off the result FPT Exam pushes.
 
 ## 2. Administrator structure — three steps
 
@@ -18,19 +19,34 @@ The admin sidebar becomes: **Overview · Set up an Assessment · Register People
 Schedule the Sitting · Results**. "Qualifications" and "Instruments" as separate pages are
 gone; the qualification is captured as part of setting up the assessment.
 
-### Set up an Assessment (intake, not a builder)
-Two ways in:
-- **Upload the paper** — the exam paper and its memo/rubric as Word or PDF (one file or
-  two). The system extracts the questions, marks, question types and marking guide into
-  the structured form the rest of the system needs; the qualification is captured on the
-  same screen from the SAQA ID (title and NQF level fetched from SAQA) with a manual
-  fallback (title, FISA/EISA, NQF).
-- **Link from Curricula Builder** — Phase F, when the connection exists.
+### Set up an Assessment — four routes (rule agreed 9 Sep 2026)
 
-Removed from the UI: manual question-by-question entry; AI drafting from SAQA; AI drafting
-from a QCTO specification document. The engines stay in the codebase but their endpoints
-are disabled (HTTP 410) unless `ENABLE_PAPER_AUTHORING=true`; the drafting capability is
-intended to move to Curricula Builder.
+Setting up an assessment starts with one question: *what kind of assessment is this?*
+The answer fixes where the paper may come from. This replaces the "two ways in" that
+stood here from 5–9 Sep.
+
+| Route | Where the paper comes from | Built on FPT Exam? |
+|---|---|---|
+| **QCTO FISA / EISA** (occupational qualification, QCTO rules) | **Linked in from Curricula Builder only.** Curricula Builder is the system of record for the paper, memo and its alignment; building a QCTO paper here would defeat the purpose of Curricula Builder. | **Never.** No drafting, no upload, no manual entry. |
+| **Legacy FISA** (SAQA legacy qualification, e.g. ND: Payroll Administration Services 67229) | **Linked to SAQA** by qualification ID. FPT Exam fetches the title, NQF level, exit-level outcomes and assessment criteria and the AI drafts the paper from them — the flow that works today. | Yes — drafted here, editable. |
+| **Build from scratch** (anything outside the QCTO rules: internal tests, short courses, skills programmes) | Administrator gives the title, then either types their own outcomes and criteria **or uploads a document** (outcomes document, or an existing paper + memo) and the AI builds the assessment. | Yes — drafted here, editable question by question. |
+| **Other courses from Curricula Builder** (CPD and other creations made on Curricula Builder) | **Linked in from Curricula Builder.** | Never — comes in as built there. |
+
+The route is recorded on the assessment (`intake_route`), shown as a badge everywhere the
+assessment appears, and cannot be changed after creation. The drafting engine is enabled
+per route: it answers for Legacy FISA and Build from scratch, and returns HTTP 410 for
+the two Curricula Builder routes regardless of environment flags. `ENABLE_PAPER_AUTHORING`
+is no longer a global switch.
+
+Whatever the route, the paper goes through the same standard check and gate below before
+it can be scheduled, and the same proctored sitting, AI-assessed / assessor-endorsed
+marking, and Results hand-over afterwards.
+
+### Every sitting is proctored (decision 8 Sep 2026)
+FPT Exam is a QCTO proctored exam site to the QCTO requirement. There is no unproctored,
+"just exam" or practice mode and no per-assessment supervision setting — a sitting on FPT
+Exam is a proctored sitting, for every route above. (Considered and rejected: a
+proctored/unproctored choice at Set up an Assessment.)
 
 ### The standard check is the gate
 Every paper coming in is checked against its outcomes (coverage of every ELO/AC, Bloom's
@@ -77,9 +93,13 @@ release event. Moderation/verification: FPTStaff.
 ## 5. Order of work
 
 1. This restructure (sidebar, intake with upload + extraction, authoring disabled,
-   standard-check gate, Results page, AI pre-fill in the dossier, assessor queue badge).
-2. Phase D — proctoring (pre-checks, consent, capture loop, seal/hash, Invigilator
+   standard-check gate, Results page, AI pre-fill in the dossier, assessor queue badge). Done.
+2. Four-route Set up an Assessment (this addendum): route chooser, per-route authoring
+   gate, Curricula Builder pull contract with a "not connected yet" state until Curricula
+   Builder exposes it.
+3. Phase D — proctoring (pre-checks, consent, capture loop, seal/hash, Invigilator
    console, Integrity engine, R2, retention sweep), learner one-time sitting codes,
    assessor email notifications.
-3. Phase E — FPTStaff connection (people pull/push, result push delivery).
-4. Phase F — Curricula Builder link (paper intake), where paper authoring lives.
+4. Phase E — FPTStaff connection (people pull/push, result push delivery).
+5. Phase F — Curricula Builder connection live (the QCTO and "other courses" routes
+   become usable; until then no QCTO paper can enter FPT Exam, by design).

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, pollJob } from "../../lib/api";
-import type { AssessmentInstrument, Qualification, JobProgress, BloomLevel, InstrumentQualityReview } from "@shared/types";
-import { PageHeader, Card, CardHead, Notice, Badge, Pill, Empty } from "../../components/ui";
+import type { AssessmentInstrument, Qualification, JobProgress, BloomLevel, InstrumentQualityReview, Question } from "@shared/types";
+import { PageHeader, Card, CardHead, Notice, Badge, TypePill, Empty } from "../../components/ui";
 import JobProgressPanel, { CHECK_STAGES } from "../../components/JobProgressPanel";
 import { BLOOM_ORDER, BLOOM_LABEL, BloomBadge, VerdictBadge, CoverageDot } from "../../components/standard";
-import { GateBadge, sourceBadge } from "./AdminAssessments";
+import { GateBadge, RouteBadge, sourceWord, routeMeta } from "../../components/intake";
 
 const fmt = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -100,6 +100,11 @@ export default function AdminInstrumentDetail() {
   const [showRubrics, setShowRubrics] = useState(false);
   const [overriding, setOverriding] = useState(false);
   const [overrideReason, setOverrideReason] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Question[]>([]);
+  const [draftTime, setDraftTime] = useState("");
+  const [draftRule, setDraftRule] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -145,6 +150,79 @@ export default function AdminInstrumentDetail() {
     }
   }
 
+  function beginEdit() {
+    if (!instrument) return;
+    setDraft(instrument.questions.map((q) => ({ ...q, options: q.options ? [...q.options] : undefined })));
+    setDraftTime(String(instrument.timeAllocationMinutes));
+    setDraftRule((instrument.passMarkOrCompetencyRule as { rule?: string } | null)?.rule ?? "");
+    setEditing(true);
+    setMessage(null);
+    setError(null);
+  }
+
+  async function saveEdit() {
+    if (!id || !instrument) return;
+    setError(null);
+    const bad = draft.find((q) => !q.prompt.trim() || !(q.maxMark >= 0) || (q.type === "mcq" && (q.options?.filter(Boolean).length ?? 0) < 2));
+    if (bad) return setError(`Q${draft.indexOf(bad) + 1} needs a prompt, a mark, and (for multiple choice) at least two options.`);
+    if (draft.length === 0) return setError("A paper needs at least one question.");
+    setSaving(true);
+    setProgress(null);
+    try {
+      const body: Record<string, unknown> = {
+        questions: draft.map((q) => ({
+          ...q,
+          prompt: q.prompt.trim(),
+          options: q.type === "mcq" ? q.options?.map((o) => o.trim()).filter(Boolean) : undefined,
+          modelAnswerOrRubric: q.modelAnswerOrRubric?.trim() || undefined,
+          eloRef: q.eloRef?.trim() || undefined,
+          acRef: q.acRef?.trim() || undefined,
+        })),
+      };
+      const t = Number(draftTime);
+      if (t > 0 && t !== instrument.timeAllocationMinutes) body.timeAllocationMinutes = t;
+      const currentRule = (instrument.passMarkOrCompetencyRule as { rule?: string } | null)?.rule ?? "";
+      if (draftRule.trim() && draftRule.trim() !== currentRule) body.passMarkOrCompetencyRule = draftRule.trim();
+      const updated = await api.patch<AssessmentInstrument & { recheckJobId: string | null }>(`/instruments/${id}`, body);
+      setEditing(false);
+      if (updated.recheckJobId) {
+        setChecking(true);
+        try {
+          await pollJob(`/instruments/jobs/${updated.recheckJobId}`, { onProgress: setProgress });
+          setMessage("Changes saved. The paper was re-checked against the assessment standard.");
+        } finally {
+          setChecking(false);
+        }
+      } else {
+        setMessage("Changes saved.");
+      }
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function updateQ(i: number, patch: Partial<Question>) {
+    setDraft((d) => d.map((q, k) => (k === i ? { ...q, ...patch } : q)));
+  }
+  function moveQ(i: number, dir: -1 | 1) {
+    setDraft((d) => {
+      const j = i + dir;
+      if (j < 0 || j >= d.length) return d;
+      const copy = [...d];
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+      return copy;
+    });
+  }
+  function addQ() {
+    setDraft((d) => [
+      ...d,
+      { id: crypto.randomUUID(), type: "short_answer", prompt: "", maxMark: 5, modelAnswerOrRubric: "", bloomLevel: "understand" },
+    ]);
+  }
+
   if (!instrument) {
     return (
       <>
@@ -167,6 +245,8 @@ export default function AdminInstrumentDetail() {
   const eloRows = (review?.coverage ?? []).filter((c) => c.kind === "elo");
   const acRows = (review?.coverage ?? []).filter((c) => c.kind === "ac");
   const covered = (review?.coverage ?? []).filter((c) => c.status === "covered").length;
+  const meta = routeMeta(instrument.intakeRoute);
+  const editable = meta.builtHere;
 
   return (
     <>
@@ -180,7 +260,8 @@ export default function AdminInstrumentDetail() {
         subtitle={`${instrument.questions.length} questions · ${totalMarks} marks · ${instrument.timeAllocationMinutes} minutes · Pass rule: ${rule || "50% overall (default)"}${qualification?.nqfLevel ? ` · NQF Level ${qualification.nqfLevel}` : ""}`}
         action={
           <div className="flex items-center gap-3">
-            {qualification && <Pill tone={qualification.qctoRegistrationType}>{qualification.qctoRegistrationType.toUpperCase()}</Pill>}
+            {qualification && <TypePill type={qualification.qctoRegistrationType} />}
+            <RouteBadge route={instrument.intakeRoute} />
             <GateBadge status={instrument.intakeStatus} />
             <button type="button" className="btn-ghost" onClick={runCheck} disabled={checking}>
               {checking ? "Checking…" : review ? "Re-run standard check" : "Run standard check"}
@@ -198,7 +279,11 @@ export default function AdminInstrumentDetail() {
             <div className="flex-1">
               <p className="font-display font-bold text-[15px]">This paper cannot be scheduled yet</p>
               <p className="text-sm text-ink-muted mt-1">
-                The standard check found it does not meet the assessment standard (see below). Fix the paper at its source and upload it again as a new version, or — if you are satisfied it is fit for use — record an override with a reason. The reason goes in the audit log.
+                The standard check found it does not meet the assessment standard (see below).{" "}
+                {editable
+                  ? "Edit the questions below — the check runs again when you save — or, if you are satisfied it is fit for use, record an override with a reason."
+                  : "Correct it on Curricula Builder and pull the new version in under Set up an Assessment, or — if you are satisfied it is fit for use — record an override with a reason."}{" "}
+                The reason goes in the audit log.
               </p>
               {overriding && (
                 <div className="mt-3 flex gap-2 items-start">
@@ -228,11 +313,12 @@ export default function AdminInstrumentDetail() {
           </div>
         </Card>
       )}
-      {instrument.sourceFiles && instrument.sourceFiles.length > 0 && (
-        <p className="t-sub mt-4">
-          Source: <Badge tone={sourceBadge(instrument.source).tone}>{sourceBadge(instrument.source).label}</Badge> {instrument.sourceFiles.join(" · ")}
-        </p>
-      )}
+      <p className="t-sub mt-4">
+        {sourceWord(instrument.source)}
+        {instrument.sourceFiles && instrument.sourceFiles.length > 0 ? ` · ${instrument.sourceFiles.join(" · ")}` : ""}
+        {instrument.externalRef ? ` · Curricula Builder ref ${instrument.externalRef}` : ""}
+        {!editable && " · Read-only on FPT Exam: corrections are made on Curricula Builder and pulled in as a new version."}
+      </p>
 
       {/* ---------------- Standard check ---------------- */}
       {review ? (
@@ -248,8 +334,12 @@ export default function AdminInstrumentDetail() {
                   {review.sourceOfOutcomes === "saqa"
                     ? "the SAQA record"
                     : review.sourceOfOutcomes === "qcto_upload"
-                      ? "the uploaded QCTO document"
-                      : "the paper's own outcome references only"}
+                      ? "the outcomes read from the uploaded document"
+                      : review.sourceOfOutcomes === "own_outcomes"
+                        ? "the outcomes you gave"
+                        : review.sourceOfOutcomes === "curricula_builder"
+                          ? "the outcomes supplied by Curricula Builder"
+                          : "the paper's own outcome references only"}
                 </p>
               </div>
               <div className="border-l border-line pl-5">
@@ -373,64 +463,148 @@ export default function AdminInstrumentDetail() {
       <Card className="mt-5">
         <CardHead
           title="Questions"
-          subtitle={`${instrument.questions.length} questions · ${totalMarks} marks`}
+          subtitle={editing ? "Editing — nothing is saved until you press Save" : `${instrument.questions.length} questions · ${totalMarks} marks`}
           right={
-            <button type="button" className="btn-ghost btn-sm" onClick={() => setShowRubrics((v) => !v)}>
-              {showRubrics ? "Hide rubrics" : "Show rubrics"}
-            </button>
+            <div className="flex items-center gap-2">
+              {editable && !editing && (
+                <button type="button" className="btn btn-sm" onClick={beginEdit} disabled={checking}>
+                  Edit questions
+                </button>
+              )}
+              {editing && (
+                <>
+                  <button type="button" className="btn-ghost btn-sm" onClick={() => setEditing(false)} disabled={saving}>
+                    Cancel
+                  </button>
+                  <button type="button" className="btn btn-sm" onClick={saveEdit} disabled={saving}>
+                    {saving ? "Saving…" : "Save and re-check"}
+                  </button>
+                </>
+              )}
+              {!editing && (
+                <button type="button" className="btn-ghost btn-sm" onClick={() => setShowRubrics((v) => !v)}>
+                  {showRubrics ? "Hide rubrics" : "Show rubrics"}
+                </button>
+              )}
+            </div>
           }
         />
-        <ul className="divide-y divide-line">
-          {instrument.questions.map((q, i) => {
-            const issues = issuesByQ.get(q.id) ?? [];
-            return (
-              <li key={q.id} className="px-5 py-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
-                      Q{i + 1} · {TYPE_LABEL[q.type] ?? q.type} · {q.maxMark} mark{q.maxMark === 1 ? "" : "s"}
-                    </p>
-                    <p className="text-sm mt-1 whitespace-pre-wrap">{q.prompt}</p>
-                    {q.type === "mcq" && q.options && (
-                      <ul className="mt-1.5 text-[13px] text-ink-muted list-disc pl-5">
-                        {q.options.map((o) => (
-                          <li key={o}>{o}</li>
-                        ))}
-                      </ul>
-                    )}
-                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 t-sub">
-                      {q.eloRef && <span>Outcome: {q.eloRef}</span>}
-                      {q.acRef && <span>Criterion: {q.acRef}</span>}
+
+        {editing ? (
+          <div className="px-5 pb-5">
+            <div className="grid grid-cols-[160px_1fr] gap-3.5 items-end py-4 border-b border-line">
+              <div>
+                <label className="field-lbl">Time (minutes)</label>
+                <input className="inp tabular" type="number" min={1} value={draftTime} onChange={(e) => setDraftTime(e.target.value)} />
+              </div>
+              <div>
+                <label className="field-lbl">Pass rule</label>
+                <input className="inp" value={draftRule} onChange={(e) => setDraftRule(e.target.value)} placeholder="e.g. 50% overall" />
+              </div>
+            </div>
+            <ul className="divide-y divide-line">
+              {draft.map((q, i) => (
+                <li key={q.id} className="py-4 space-y-3">
+                  <div className="flex items-center gap-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted w-10">Q{i + 1}</p>
+                    <select className="inp !w-auto" value={q.type} onChange={(e) => updateQ(i, { type: e.target.value as Question["type"], options: e.target.value === "mcq" ? q.options ?? ["", "", "", ""] : undefined })}>
+                      {Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                    <label className="text-[12px] text-ink-muted flex items-center gap-1.5">
+                      Marks <input className="inp !w-20 tabular" type="number" min={0} value={q.maxMark} onChange={(e) => updateQ(i, { maxMark: Number(e.target.value) })} />
+                    </label>
+                    <select className="inp !w-auto" value={q.bloomLevel ?? ""} onChange={(e) => updateQ(i, { bloomLevel: (e.target.value || undefined) as BloomLevel | undefined })}>
+                      <option value="">Bloom's level…</option>
+                      {BLOOM_ORDER.map((l) => <option key={l} value={l}>{BLOOM_LABEL[l]}</option>)}
+                    </select>
+                    <span className="ml-auto flex items-center gap-1">
+                      <button type="button" className="btn-ghost btn-sm" onClick={() => moveQ(i, -1)} disabled={i === 0} title="Move up">↑</button>
+                      <button type="button" className="btn-ghost btn-sm" onClick={() => moveQ(i, 1)} disabled={i === draft.length - 1} title="Move down">↓</button>
+                      <button type="button" className="btn-ghost btn-sm text-red-700" onClick={() => setDraft((d) => d.filter((_, k) => k !== i))}>Remove</button>
+                    </span>
+                  </div>
+                  <textarea className="inp font-normal" rows={3} value={q.prompt} onChange={(e) => updateQ(i, { prompt: e.target.value })} placeholder="The question as the learner will see it" />
+                  {q.type === "mcq" && (
+                    <div>
+                      <label className="field-lbl">Options <span className="normal-case font-normal text-ink-faint">(one per line; put the correct one in the rubric)</span></label>
+                      <textarea className="inp font-normal" rows={4} value={(q.options ?? []).join("\n")} onChange={(e) => updateQ(i, { options: e.target.value.split("\n") })} />
                     </div>
-                    {showRubrics && (
-                      <p className="mt-2 text-[13px] whitespace-pre-wrap rounded-lg p-3 border border-dashed border-line-strong text-ink-muted">
-                        {q.modelAnswerOrRubric || "No rubric recorded."}
-                      </p>
-                    )}
-                    {issues.map((iss, k) => (
-                      <p
-                        key={k}
-                        className={
-                          "mt-2 text-[13px] rounded-lg px-3 py-2 border " +
-                          (iss.severity === "critical"
-                            ? "border-red-200 bg-red-50 text-red-800"
-                            : iss.severity === "warning"
-                              ? "border-amber-200 bg-amber-50 text-amber-800"
-                              : "border-line bg-surface-2 text-ink-muted")
-                        }
-                      >
-                        <strong className="capitalize">{iss.severity}:</strong> {iss.issue} <span className="opacity-80">— {iss.suggestion}</span>
-                      </p>
-                    ))}
+                  )}
+                  <div>
+                    <label className="field-lbl">Model answer / marking rubric</label>
+                    <textarea className="inp font-normal" rows={3} value={q.modelAnswerOrRubric ?? ""} onChange={(e) => updateQ(i, { modelAnswerOrRubric: e.target.value })} placeholder="What earns the marks — specific enough for an assessor and the AI marker to apply" />
                   </div>
-                  <div className="shrink-0">
-                    <BloomBadge level={q.bloomLevel} />
+                  <div className="grid grid-cols-2 gap-3.5">
+                    <div>
+                      <label className="field-lbl">Outcome it evidences</label>
+                      <input className="inp" value={q.eloRef ?? ""} onChange={(e) => updateQ(i, { eloRef: e.target.value })} placeholder="e.g. ELO 2" />
+                    </div>
+                    <div>
+                      <label className="field-lbl">Criterion</label>
+                      <input className="inp" value={q.acRef ?? ""} onChange={(e) => updateQ(i, { acRef: e.target.value })} placeholder="e.g. AC 2.3" />
+                    </div>
                   </div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+                </li>
+              ))}
+            </ul>
+            <div className="pt-4 flex items-center justify-between">
+              <button type="button" className="btn-ghost" onClick={addQ}>+ Add a question</button>
+              <p className="t-sub tabular">{draft.length} questions · {draft.reduce((s, q) => s + (Number(q.maxMark) || 0), 0)} marks</p>
+            </div>
+          </div>
+        ) : (
+          <ul className="divide-y divide-line">
+            {instrument.questions.map((q, i) => {
+              const issues = issuesByQ.get(q.id) ?? [];
+              return (
+                <li key={q.id} className="px-5 py-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
+                        Q{i + 1} · {TYPE_LABEL[q.type] ?? q.type} · {q.maxMark} mark{q.maxMark === 1 ? "" : "s"}
+                      </p>
+                      <p className="text-sm mt-1 whitespace-pre-wrap">{q.prompt}</p>
+                      {q.type === "mcq" && q.options && (
+                        <ul className="mt-1.5 text-[13px] text-ink-muted list-disc pl-5">
+                          {q.options.map((o) => (
+                            <li key={o}>{o}</li>
+                          ))}
+                        </ul>
+                      )}
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 t-sub">
+                        {q.eloRef && <span>Outcome: {q.eloRef}</span>}
+                        {q.acRef && <span>Criterion: {q.acRef}</span>}
+                      </div>
+                      {showRubrics && (
+                        <p className="mt-2 text-[13px] whitespace-pre-wrap rounded-lg p-3 border border-dashed border-line-strong text-ink-muted">
+                          {q.modelAnswerOrRubric || "No rubric recorded."}
+                        </p>
+                      )}
+                      {issues.map((iss, k) => (
+                        <p
+                          key={k}
+                          className={
+                            "mt-2 text-[13px] rounded-lg px-3 py-2 border " +
+                            (iss.severity === "critical"
+                              ? "border-red-200 bg-red-50 text-red-800"
+                              : iss.severity === "warning"
+                                ? "border-amber-200 bg-amber-50 text-amber-800"
+                                : "border-line bg-surface-2 text-ink-muted")
+                          }
+                        >
+                          <strong className="capitalize">{iss.severity}:</strong> {iss.issue} <span className="opacity-80">— {iss.suggestion}</span>
+                        </p>
+                      ))}
+                    </div>
+                    <div className="shrink-0">
+                      <BloomBadge level={q.bloomLevel} />
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </Card>
     </>
   );

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import type { Qualification, AssessmentInstrument, ExamSitting, PublicUser } from "@shared/types";
-import { PageHeader, Card, CardHead, Notice, Empty, PlusIcon } from "../../components/ui";
+import { PageHeader, Card, CardHead, Notice, Empty, PlusIcon, typeWord } from "../../components/ui";
 
 const fmt = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -195,7 +195,7 @@ export default function AdminSittings() {
                     <tr>
                       <td>
                         <div className="font-semibold">{qualTitle(s.qualificationId)}</div>
-                        <div className="t-sub">{qualifications.find((q) => q.id === s.qualificationId)?.qctoRegistrationType.toUpperCase()}</div>
+                        <div className="t-sub">{typeWord(qualifications.find((q) => q.id === s.qualificationId)?.qctoRegistrationType)}</div>
                       </td>
                       <td>{fmt(s.startTime)} <span className="text-ink-faint">→</span> {fmt(s.endTime)}</td>
                       <td>{users.find((u) => u.id === s.assignedAssessorId)?.name ?? "—"}</td>

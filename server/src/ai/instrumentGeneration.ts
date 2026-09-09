@@ -18,7 +18,7 @@ function getClient(): Anthropic {
 
 export interface GenerateInstrumentInput {
   qualificationTitle: string;
-  qctoRegistrationType: "fisa" | "eisa";
+  qctoRegistrationType: "fisa" | "eisa" | "non_qcto";
   exitLevelOutcomes: string[];
   assessmentCriteria: string[];
   timeAllocationMinutes: number;
@@ -98,11 +98,16 @@ const SUBMIT_TOOL = {
 };
 
 function buildPrompt(input: GenerateInstrumentInput): string {
-  const registrationLabel = input.qctoRegistrationType === "eisa" ? "EISA" : "FISA";
   const sourceDescription = input.sourceDescription ?? "as published by SAQA";
-  return `You are drafting a QCTO ${registrationLabel} final assessment paper for the qualification "${input.qualificationTitle}".
+  const opening =
+    input.qctoRegistrationType === "non_qcto"
+      ? `You are drafting a summative assessment paper for "${input.qualificationTitle}". This assessment falls outside the QCTO's regulated FISA/EISA rules, but it is a formal proctored assessment and must be built to the same professional standard: valid, fair, reliable and traceable to its outcomes.
 
-The paper must be built directly from this qualification's registered Exit Level Outcomes (ELOs) and Associated Assessment Criteria (ACs), ${sourceDescription}. Draft a full assessment instrument: a mix of question types (multiple choice, short answer, long answer, practical/portfolio upload) appropriate to what each outcome actually requires a learner to demonstrate - don't force every outcome into the same question type. Every question must be traceable to a specific ELO/AC via its eloRef field. Aim for enough questions to cover every ELO at least once within the given time allocation; it's fine to leave a gap uncovered rather than write a weak or unsupported question - note any gap in coverageNotes instead.
+The paper must be built directly from the assessment's stated outcomes and assessment criteria, ${sourceDescription}.`
+      : `You are drafting a QCTO ${input.qctoRegistrationType === "eisa" ? "EISA" : "FISA"} final assessment paper for the qualification "${input.qualificationTitle}".
+
+The paper must be built directly from this qualification's registered Exit Level Outcomes (ELOs) and Associated Assessment Criteria (ACs), ${sourceDescription}.`;
+  return `${opening} Draft a full assessment instrument: a mix of question types (multiple choice, short answer, long answer, practical/portfolio upload) appropriate to what each outcome actually requires a learner to demonstrate - don't force every outcome into the same question type. Every question must be traceable to a specific ELO/AC via its eloRef field. Aim for enough questions to cover every ELO at least once within the given time allocation; it's fine to leave a gap uncovered rather than write a weak or unsupported question - note any gap in coverageNotes instead.
 
 Cognitive demand: ${bloomGuidanceForNqf(input.nqfLevel ?? null)} Label every question with the Bloom's level it genuinely demands (a recall question is "remember" even if the topic is advanced), and do not let recall-only questions dominate a paper at this level. Cover every Assessment Criterion, not only every Exit Level Outcome; where one question can honestly evidence several criteria, say which one it primarily evidences in acRef.
 

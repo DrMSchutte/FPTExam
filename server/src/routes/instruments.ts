@@ -1,5 +1,4 @@
 import { Router } from "express";
-import multer from "multer";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -12,26 +11,8 @@ import {
   auditLog,
 } from "../db/schema.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
-import { fetchSaqaExtract, SaqaExtractError } from "../integrations/saqa/fetchQualification.js";
-import {
-  extractTextFromDocument,
-  DocumentExtractionError,
-} from "../integrations/qcto/extractDocumentText.js";
-import { generateInstrumentFromSaqa, generateInstrumentFromOutcomes } from "../ai/instrumentGeneration.js";
-import {
-  extractOutcomesFromDocumentText,
-  DocumentOutcomeExtractionError,
-} from "../ai/documentOutcomeExtraction.js";
 import { reviewInstrumentAgainstStandard } from "../ai/instrumentQualityReview.js";
 import type { Question, InstrumentQualityReview } from "../types.js";
-
-// Memory storage (not disk) - documents are small (a QAS document is a few
-// pages), we only need the buffer transiently to pull text out of it, and
-// nothing about the original file needs to persist once that's done.
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
-});
 
 export const instrumentsRouter = Router();
 
@@ -75,7 +56,7 @@ export async function runStandardCheck(instrumentId: string): Promise<Instrument
 
   let exitLevelOutcomes: string[] = [];
   let assessmentCriteria: string[] = [];
-  let sourceOfOutcomes: "saqa" | "qcto_upload" | "paper_only" = "paper_only";
+  let sourceOfOutcomes: "saqa" | "qcto_upload" | "own_outcomes" | "curricula_builder" | "paper_only" = "paper_only";
   let nqfLevel = qualification.nqfLevel ?? null;
   if (instrument.saqaExtractId) {
     const [ex] = await db.select().from(saqaQualificationExtracts).where(eq(saqaQualificationExtracts.id, instrument.saqaExtractId));
@@ -90,7 +71,11 @@ export async function runStandardCheck(instrumentId: string): Promise<Instrument
     if (ex) {
       exitLevelOutcomes = ex.exitLevelOutcomes as string[];
       assessmentCriteria = ex.assessmentCriteria as string[];
-      sourceOfOutcomes = "qcto_upload";
+      sourceOfOutcomes = ex.originalFilename.startsWith("curricula-builder:")
+        ? "curricula_builder"
+        : ex.originalFilename.startsWith("typed:")
+          ? "own_outcomes"
+          : "qcto_upload";
     }
   }
 
@@ -120,16 +105,15 @@ export async function runStandardCheck(instrumentId: string): Promise<Instrument
   return review;
 }
 
-// FPT Exam no longer authors papers (docs/restructure-2026-09-05.md §2). The
-// manual-entry and AI-drafting endpoints below stay in the codebase - the
-// drafting capability is destined for Curricula Builder - but are switched off
-// unless explicitly enabled for a development environment.
+// Question-by-question manual entry has no UI (docs/restructure-2026-09-05.md §2:
+// assessments are drafted by the AI or linked in). The endpoint stays as a
+// development/test seam, switched off unless explicitly enabled.
 const AUTHORING_ENABLED = process.env.ENABLE_PAPER_AUTHORING === "true";
 function authoringGate(_req: AuthedRequest, res: import("express").Response, next: import("express").NextFunction) {
   if (!AUTHORING_ENABLED) {
     return res.status(410).json({
-      error: "FPT Exam does not author papers.",
-      detail: "Upload the paper and its memo under Set up an Assessment, or link it from Curricula Builder.",
+      error: "FPT Exam does not take papers typed in question by question.",
+      detail: "Use Set up an Assessment: link a QCTO paper from Curricula Builder, draft a legacy FISA from SAQA, or build a non-QCTO assessment from its outcomes.",
     });
   }
   next();
@@ -214,10 +198,8 @@ const createSchema = z.object({
   passMarkOrCompetencyRule: z.string().optional(),
 });
 
-// v1 intake per Section 5 of the spec: manual entry against the defined
-// schema. `source` is always 'manual' here - a v2 `/instruments/import`
-// route (Curricula Builder, once it exists) would populate the same table
-// with source='curricula_builder' and no other code needs to change.
+// Manual entry against the defined schema (development/test seam - see
+// authoringGate). Recorded as built here.
 instrumentsRouter.post(
   "/",
   requireAuth,
@@ -241,6 +223,7 @@ instrumentsRouter.post(
         permittedMaterials: permittedMaterials ?? [],
         passMarkOrCompetencyRule: passMarkOrCompetencyRule ? { rule: passMarkOrCompetencyRule } : null,
         source: "manual",
+        intakeRoute: "built_here",
         // Dev-only route (authoringGate): no standard check runs here, so the
         // paper is usable straight away, shown as "Not checked".
         intakeStatus: "ready",
@@ -334,12 +317,11 @@ const updateSchema = z.object({
   passMarkOrCompetencyRule: z.string().optional(),
 });
 
-// Lets an Administrator edit any instrument after creation - manual,
-// AI-generated, or (once it exists) Curricula Builder-imported. This is how
-// an AI-drafted paper gets corrected in practice: FPT Academy chose not to
-// require a review/approval step before an AI-generated instrument can be
-// scheduled (build brief Section 5.6), so editing it afterward is the
-// expected path rather than a formal gate.
+// Edits to a paper drafted here (legacy FISA from SAQA, or built from scratch). A
+// paper linked in from Curricula Builder is read-only on FPT Exam: it is
+// corrected there and pulled again as a new version. Changing the questions
+// makes the last standard check stale, so the paper goes back to `checking`
+// and the check is re-run as a job (the response carries its id).
 instrumentsRouter.patch(
   "/:id",
   requireAuth,
@@ -352,291 +334,49 @@ instrumentsRouter.patch(
     if (Object.keys(parsed.data).length === 0) {
       return res.status(400).json({ error: "No fields to update." });
     }
+    const [row] = await db.select().from(assessmentInstruments).where(eq(assessmentInstruments.id, req.params.id));
+    if (!row) return res.status(404).json({ error: "Instrument not found." });
+    if (row.intakeRoute === "qcto_curricula_builder" || row.intakeRoute === "curricula_builder_other") {
+      return res.status(409).json({
+        error: "This paper is linked in from Curricula Builder and cannot be edited here.",
+        detail: "Correct it on Curricula Builder and pull the new version under Set up an Assessment.",
+      });
+    }
     const { passMarkOrCompetencyRule, ...rest } = parsed.data;
+    const questionsChanged = rest.questions !== undefined && JSON.stringify(rest.questions) !== JSON.stringify(row.questions);
+    const recheck = questionsChanged || rest.timeAllocationMinutes !== undefined || passMarkOrCompetencyRule !== undefined;
     const [updated] = await db
       .update(assessmentInstruments)
       .set({
         ...rest,
-        ...(passMarkOrCompetencyRule !== undefined
-          ? { passMarkOrCompetencyRule: { rule: passMarkOrCompetencyRule } }
-          : {}),
+        ...(passMarkOrCompetencyRule !== undefined ? { passMarkOrCompetencyRule: { rule: passMarkOrCompetencyRule } } : {}),
+        ...(recheck && row.intakeStatus !== "override" ? { intakeStatus: "checking" as const } : {}),
       })
       .where(eq(assessmentInstruments.id, req.params.id))
       .returning();
-    if (!updated) return res.status(404).json({ error: "Instrument not found." });
-    return res.json(updated);
-  }
-);
-
-const generateSchema = z.object({
-  qualificationId: z.string().uuid(),
-  version: z.string().min(1),
-  timeAllocationMinutes: z.number().int().positive(),
-  permittedMaterials: z.array(z.string()).optional(),
-});
-
-// AI-from-SAQA intake path (spec Section 5, build brief Section 5.6): fetch
-// the qualification's public SAQA page, extract its Exit Level Outcomes and
-// Associated Assessment Criteria, hand them to the Instrument Generation
-// Engine, and store the result as a normal instrument (source='ai_generated').
-// No review/approval gate before it's usable - that was FPT Academy's
-// explicit call - but the SAQA extract used is stored (saqa_extract_id) so
-// exactly what justified the paper stays auditable.
-instrumentsRouter.post(
-  "/generate",
-  requireAuth,
-  requireRole("administrator"),
-  authoringGate,
-  async (req: AuthedRequest, res) => {
-    const parsed = generateSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ error: "Invalid request body.", detail: parsed.error.message });
-    }
-    const { qualificationId, version, timeAllocationMinutes, permittedMaterials } = parsed.data;
-
-    const [qualification] = await db
-      .select()
-      .from(qualifications)
-      .where(eq(qualifications.id, qualificationId));
-    if (!qualification) return res.status(404).json({ error: "Qualification not found." });
-    if (!qualification.saqaQualificationId) {
-      return res.status(400).json({
-        error:
-          "This qualification has no SAQA qualification ID set. Set one with PATCH /qualifications/:id first.",
+    await db.insert(auditLog).values({
+      actorId: req.auth!.userId,
+      action: "instrument_edited",
+      targetType: "assessment_instrument",
+      targetId: row.id,
+      reason: questionsChanged ? `questions edited (${row.questions instanceof Array ? row.questions.length : "?"} → ${updated.questions instanceof Array ? updated.questions.length : "?"})` : "paper details edited",
+    });
+    let jobId: string | null = null;
+    if (recheck) {
+      jobId = await startJob("ai_instrument_quality_check", { instrumentId: row.id, reason: "edited" });
+      const jid = jobId;
+      runInBackground(jid, async () => {
+        await setProgress(jid, 1, 2, "Checking the edited paper against the assessment standard");
+        try {
+          await runStandardCheck(row.id);
+        } catch (err) {
+          await db.update(assessmentInstruments).set({ intakeStatus: "blocked" }).where(eq(assessmentInstruments.id, row.id));
+          return { error: "The assessment-standard check failed.", detail: err instanceof Error ? err.message : String(err) };
+        }
+        await setProgress(jid, 2, 2, "Saved");
+        return { instrumentId: row.id, qualityCheck: true as const };
       });
     }
-
-    const saqaId = qualification.saqaQualificationId;
-    const jobId = await startJob("ai_instrument_generation", {
-      path: "saqa",
-      qualificationId,
-      saqaQualificationId: saqaId,
-      version,
-      timeAllocationMinutes,
-    });
-
-    runInBackground(jobId, async () => {
-      await setProgress(jobId, 1, 5, "Fetching the SAQA record", `SAQA qualification ID ${saqaId}`);
-      let extract;
-      try {
-        extract = await fetchSaqaExtract(saqaId);
-      } catch (err) {
-        if (err instanceof SaqaExtractError) {
-          return { error: "Could not extract data from SAQA.", detail: err.message };
-        }
-        throw err;
-      }
-
-      await setProgress(
-        jobId,
-        2,
-        5,
-        "Extracting outcomes and criteria",
-        `${extract.exitLevelOutcomes.length} Exit Level Outcomes, ${extract.assessmentCriteria.length} Assessment Criteria${extract.nqfLevel ? `, NQF Level ${extract.nqfLevel}` : ""}`
-      );
-      const [extractRow] = await db
-        .insert(saqaQualificationExtracts)
-        .values({
-          qualificationId,
-          saqaQualificationId: saqaId,
-          exitLevelOutcomes: extract.exitLevelOutcomes,
-          assessmentCriteria: extract.assessmentCriteria,
-          sourceUrl: extract.sourceUrl,
-          nqfLevel: extract.nqfLevel,
-        })
-        .returning();
-      // Record the NQF level on the qualification if nobody has set it yet.
-      const nqfLevel = qualification.nqfLevel ?? extract.nqfLevel ?? null;
-      if (!qualification.nqfLevel && extract.nqfLevel) {
-        await db.update(qualifications).set({ nqfLevel: extract.nqfLevel }).where(eq(qualifications.id, qualificationId));
-      }
-
-      await setProgress(jobId, 3, 5, "Drafting questions and marking rubrics", "Every outcome and criterion, at the right Bloom's level - this is the long step");
-      let generated;
-      try {
-        generated = await generateInstrumentFromSaqa({
-          qualificationTitle: qualification.title,
-          qctoRegistrationType: qualification.qctoRegistrationType,
-          exitLevelOutcomes: extract.exitLevelOutcomes,
-          assessmentCriteria: extract.assessmentCriteria,
-          timeAllocationMinutes,
-          permittedMaterials: permittedMaterials ?? [],
-          nqfLevel,
-        });
-      } catch (err) {
-        return {
-          error: "The AI could not draft an instrument from this SAQA data.",
-          detail: err instanceof Error ? err.message : String(err),
-        };
-      }
-
-      const [created] = await db
-        .insert(assessmentInstruments)
-        .values({
-          qualificationId,
-          version,
-          questions: generated.questions,
-          timeAllocationMinutes,
-          permittedMaterials: permittedMaterials ?? [],
-          passMarkOrCompetencyRule: { rule: generated.passMarkOrCompetencyRule },
-          source: "ai_generated",
-          saqaExtractId: extractRow.id,
-        })
-        .returning();
-
-      await setProgress(jobId, 4, 5, "Checking the paper against the assessment standard", `${generated.questions.length} questions drafted - checking coverage, Bloom's demand and rubrics`);
-      try {
-        await runStandardCheck(created.id);
-      } catch (err) {
-        // The paper exists and is usable; the check can be re-run from its page.
-        console.error(`Standard check failed for instrument ${created.id}:`, err);
-      }
-      await setProgress(jobId, 5, 5, "Saved");
-      return { instrumentId: created.id, questionCount: generated.questions.length, coverageNotes: generated.coverageNotes };
-    });
-
-    return res.status(202).json({ jobId });
-  }
-);
-
-const generateFromUploadFieldsSchema = z.object({
-  qualificationId: z.string().uuid(),
-  version: z.string().min(1),
-  timeAllocationMinutes: z.coerce.number().int().positive(),
-  // Sent as a single comma-separated form field, not a JSON array -
-  // multipart/form-data doesn't carry structured fields the way a JSON body does.
-  permittedMaterials: z.string().optional(),
-});
-
-// Fourth instrument-intake path (spec Section 5 / build brief Section 5.6):
-// an Administrator uploads the actual QCTO document for a qualification - a
-// Qualification Assessment Specifications (QAS) / External Assessment
-// Specifications document, in practice a PDF or .docx (QCTO does not
-// distribute these as SCORM packages - SCORM is an e-learning content
-// packaging/tracking standard, not an assessment-paper format). Text is
-// extracted from the file, the AI identifies the outcomes/criteria in it,
-// and the same Instrument Generation Engine used for the SAQA path drafts
-// the paper. Same "usable immediately" rule as the SAQA path - no review gate.
-instrumentsRouter.post(
-  "/generate-from-upload",
-  requireAuth,
-  requireRole("administrator"),
-  authoringGate,
-  upload.single("document"),
-  async (req: AuthedRequest, res) => {
-    const parsed = generateFromUploadFieldsSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ error: "Invalid request body.", detail: parsed.error.message });
-    }
-    if (!req.file) {
-      return res.status(400).json({ error: "No document file was uploaded (expected form field 'document')." });
-    }
-    const { qualificationId, version, timeAllocationMinutes } = parsed.data;
-    const permittedMaterials = parsed.data.permittedMaterials
-      ? parsed.data.permittedMaterials
-          .split(",")
-          .map((m) => m.trim())
-          .filter(Boolean)
-      : [];
-
-    const [qualification] = await db
-      .select()
-      .from(qualifications)
-      .where(eq(qualifications.id, qualificationId));
-    if (!qualification) return res.status(404).json({ error: "Qualification not found." });
-
-    let rawText: string;
-    try {
-      rawText = await extractTextFromDocument(
-        req.file.buffer,
-        req.file.mimetype,
-        req.file.originalname
-      );
-    } catch (err) {
-      if (err instanceof DocumentExtractionError) {
-        return res.status(400).json({ error: "Could not read the uploaded document.", detail: err.message });
-      }
-      throw err;
-    }
-
-    const originalFilename = req.file.originalname;
-    const jobId = await startJob("ai_instrument_generation", {
-      path: "upload",
-      qualificationId,
-      originalFilename,
-      version,
-      timeAllocationMinutes,
-    });
-
-    runInBackground(jobId, async () => {
-      await setProgress(jobId, 1, 4, "Reading outcomes and criteria from the document", originalFilename);
-      let extracted;
-      try {
-        extracted = await extractOutcomesFromDocumentText(rawText, qualification.title);
-      } catch (err) {
-        if (err instanceof DocumentOutcomeExtractionError) {
-          return {
-            error: "Could not identify outcomes/assessment criteria in the uploaded document.",
-            detail: err.message,
-          };
-        }
-        throw err;
-      }
-
-      const [extractRow] = await db
-        .insert(qctoDocumentExtracts)
-        .values({
-          qualificationId,
-          originalFilename,
-          exitLevelOutcomes: extracted.exitLevelOutcomes,
-          assessmentCriteria: extracted.assessmentCriteria,
-        })
-        .returning();
-
-      await setProgress(jobId, 2, 4, "Drafting questions and marking rubrics", `${extracted.exitLevelOutcomes.length} outcomes, ${extracted.assessmentCriteria.length} criteria found - this is the long step`);
-      let generated;
-      try {
-        generated = await generateInstrumentFromOutcomes({
-          qualificationTitle: qualification.title,
-          qctoRegistrationType: qualification.qctoRegistrationType,
-          exitLevelOutcomes: extracted.exitLevelOutcomes,
-          assessmentCriteria: extracted.assessmentCriteria,
-          timeAllocationMinutes,
-          permittedMaterials,
-          sourceDescription: `as extracted from the uploaded document "${originalFilename}"`,
-          nqfLevel: qualification.nqfLevel,
-        });
-      } catch (err) {
-        return {
-          error: "The AI could not draft an instrument from this document.",
-          detail: err instanceof Error ? err.message : String(err),
-        };
-      }
-
-      const [created] = await db
-        .insert(assessmentInstruments)
-        .values({
-          qualificationId,
-          version,
-          questions: generated.questions,
-          timeAllocationMinutes,
-          permittedMaterials,
-          passMarkOrCompetencyRule: { rule: generated.passMarkOrCompetencyRule },
-          source: "qcto_upload",
-          qctoExtractId: extractRow.id,
-        })
-        .returning();
-
-      await setProgress(jobId, 3, 4, "Checking the paper against the assessment standard", `${generated.questions.length} questions drafted`);
-      try {
-        await runStandardCheck(created.id);
-      } catch (err) {
-        console.error(`Standard check failed for instrument ${created.id}:`, err);
-      }
-      await setProgress(jobId, 4, 4, "Saved");
-      return { instrumentId: created.id, questionCount: generated.questions.length, coverageNotes: generated.coverageNotes };
-    });
-
-    return res.status(202).json({ jobId });
+    return res.json({ ...updated, recheckJobId: jobId });
   }
 );

@@ -68,12 +68,20 @@ export function Badge({ tone, children }: { tone: BadgeTone; children: ReactNode
   return <span className={"badge " + BADGE_TONES[tone]}>{children}</span>;
 }
 
-export function Pill({ tone, children }: { tone: "eisa" | "fisa"; children: ReactNode }) {
+export function Pill({ tone, children }: { tone: "eisa" | "fisa" | "non_qcto"; children: ReactNode }) {
   return (
-    <span className={"pill " + (tone === "eisa" ? "bg-brand-50 text-brand-700" : "bg-blue-50 text-blue-700")}>
+    <span className={"pill whitespace-nowrap " + (tone === "eisa" ? "bg-brand-50 text-brand-700" : tone === "fisa" ? "bg-blue-50 text-blue-700" : "bg-surface-2 text-ink-muted border border-line")}>
       {children}
     </span>
   );
+}
+
+// The assessment's regulatory class, as a pill: QCTO EISA, QCTO FISA, or outside
+// the QCTO rules.
+export const TYPE_LABEL: Record<"eisa" | "fisa" | "non_qcto", string> = { eisa: "EISA", fisa: "FISA", non_qcto: "Non-QCTO" };
+export const typeWord = (t: "eisa" | "fisa" | "non_qcto" | undefined | null) => (t ? TYPE_LABEL[t] : "");
+export function TypePill({ type }: { type: "eisa" | "fisa" | "non_qcto" }) {
+  return <Pill tone={type}>{TYPE_LABEL[type] ?? type}</Pill>;
 }
 
 export function Empty({ children }: { children: ReactNode }) {

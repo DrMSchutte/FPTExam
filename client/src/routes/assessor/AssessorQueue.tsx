@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import type { AssessorQueueItem } from "@shared/types";
-import { PageHeader, Card, CardHead, Notice, Badge, Pill, Empty } from "../../components/ui";
+import { PageHeader, Card, CardHead, Notice, Badge, TypePill, Empty } from "../../components/ui";
 
 const fmt = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -100,7 +100,7 @@ export default function AssessorQueue({ mode }: { mode: "open" | "signed" }) {
                   </td>
                   <td>
                     <div className="flex items-center gap-2">
-                      <Pill tone={r.qctoRegistrationType}>{r.qctoRegistrationType.toUpperCase()}</Pill>
+                      <TypePill type={r.qctoRegistrationType} />
                       <span>{r.qualificationTitle}</span>
                     </div>
                     <p className="t-sub">Paper {r.instrumentVersion}</p>

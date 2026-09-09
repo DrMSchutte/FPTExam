@@ -41,11 +41,11 @@ function getClient(): Anthropic {
 
 export interface QualityReviewInput {
   qualificationTitle: string;
-  qctoRegistrationType: "fisa" | "eisa";
+  qctoRegistrationType: "fisa" | "eisa" | "non_qcto";
   nqfLevel: number | null;
   exitLevelOutcomes: string[]; // may be empty when the paper has no source extract
   assessmentCriteria: string[];
-  sourceOfOutcomes: "saqa" | "qcto_upload" | "paper_only";
+  sourceOfOutcomes: "saqa" | "qcto_upload" | "own_outcomes" | "curricula_builder" | "paper_only";
   questions: Question[];
   timeAllocationMinutes: number;
   passRule: string;
@@ -140,10 +140,10 @@ const SUBMIT_TOOL = {
 };
 
 function buildPrompt(input: QualityReviewInput, profile: InstrumentProfile): string {
-  const label = input.qctoRegistrationType === "eisa" ? "EISA" : "FISA";
+  const label = input.qctoRegistrationType === "eisa" ? "QCTO EISA" : input.qctoRegistrationType === "fisa" ? "QCTO FISA" : "non-QCTO summative";
   const outcomesBlock =
     input.exitLevelOutcomes.length > 0
-      ? `EXIT LEVEL OUTCOMES (${input.sourceOfOutcomes === "saqa" ? "from the SAQA record" : "from the uploaded QCTO document"}):
+      ? `EXIT LEVEL OUTCOMES (${input.sourceOfOutcomes === "saqa" ? "from the SAQA record" : input.sourceOfOutcomes === "qcto_upload" ? "from the uploaded document" : input.sourceOfOutcomes === "curricula_builder" ? "as supplied by Curricula Builder" : "as stated by the Administrator who set the assessment up"}):
 ${input.exitLevelOutcomes.map((e, i) => `ELO ${i + 1}: ${e}`).join("\n")}
 
 ASSOCIATED ASSESSMENT CRITERIA:
@@ -161,7 +161,7 @@ Model answer / rubric: ${q.modelAnswerOrRubric ?? "(none)"}`
 
   const bloomLine = BLOOM_LEVELS.map((l) => `${l} ${profile.byBloom[l].marks}`).join(", ");
 
-  return `You are a QCTO assessment moderator checking whether a ${label} final assessment paper for "${input.qualificationTitle}" (${input.nqfLevel ? `NQF Level ${input.nqfLevel}` : "NQF level not recorded"}) meets the full requirement of the assessment standard.
+  return `You are an assessment moderator working to QCTO standards, checking whether a ${label} assessment paper for "${input.qualificationTitle}" (${input.nqfLevel ? `NQF Level ${input.nqfLevel}` : "NQF level not recorded"}) meets the full requirement of the assessment standard.
 
 The standard means: every registered Exit Level Outcome AND every Associated Assessment Criterion is assessed by at least one question that genuinely evidences it; the cognitive demand (revised Bloom's taxonomy) matches the NQF level - competence is shown by application, analysis and evaluation, not recall alone; each question has a rubric an assessor can mark consistently; marks are weighted in proportion to importance; the paper is answerable in the time.
 

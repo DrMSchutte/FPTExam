@@ -7,17 +7,19 @@ and `docs/exam-centre-build-brief.md`. Where those two documents and the
 project's `moderation-signoff-policy.md` / `build-roadmap.md` disagree, the
 latter two are current.
 
-**Built so far (Phases A and B):** login with MFA and role-based access; the
-Administrator area (qualifications, assessment instruments via manual entry /
-AI-from-SAQA / AI-from-uploaded-QCTO-document, exam sittings, learner
-assignment, user registration with the FPTStaff pull-through designed in); the
-Learner exam-taking flow (start → answer → autosave → submit). Four roles:
-Administrator, Learner, Assessor, Invigilator - moderation and QA live in the
-separate FPTStaff application.
+**Built so far (Phases A–C + restructure):** login with MFA and role-based
+access; the Administrator area in three steps — *Set up an Assessment* (four
+routes, see `docs/restructure-2026-09-05.md` §2: QCTO FISA/EISA linked in from
+Curricula Builder only; legacy FISA drafted from SAQA; non-QCTO assessments
+built here from their outcomes; other Curricula Builder courses), *Register
+People*, *Schedule the Sitting*, plus *Results*; the assessment-standard check
+(coverage + Bloom's vs NQF) as the gate to scheduling; the Learner exam-taking
+flow; the Assessor workspace where the AI assesses and the assessor endorses.
+Every sitting is proctored to the QCTO requirement — there are no modes.
 
-**Next (Phase C onward):** the Assessor marking screen and AI marking/gap
-engine, then proctoring, then switching on the FPTStaff and Curricula Builder
-integrations. See `build-roadmap.md` in the project for the full phase plan.
+**Next:** Phase D proctoring, then the FPTStaff connection (Phase E) and the
+Curricula Builder connection going live (Phase F; the contract is in
+`docs/curricula-builder-contract.md`).
 
 ## Running locally
 

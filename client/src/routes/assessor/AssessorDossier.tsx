@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import type { Dossier, QuestionMark, SuggestionReview, AiQuestionSuggestion, Outcome } from "@shared/types";
-import { PageHeader, Card, CardHead, Notice, Badge, Pill } from "../../components/ui";
+import { PageHeader, Card, CardHead, Notice, Badge, TypePill } from "../../components/ui";
 
 const fmt = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -226,7 +226,7 @@ export default function AssessorDossier() {
         subtitle={`${dossier.qualification.title} · Paper ${dossier.instrument.version} · Submitted ${fmt(dossier.session.submissionTime)}`}
         action={
           <div className="flex items-center gap-3">
-            <Pill tone={dossier.qualification.qctoRegistrationType}>{dossier.qualification.qctoRegistrationType.toUpperCase()}</Pill>
+            <TypePill type={dossier.qualification.qctoRegistrationType} />
             {signedOff ? <OutcomeBadge o={dossier.decision?.outcome} /> : <Badge tone="blue">Marking</Badge>}
           </div>
         }

@@ -19,7 +19,11 @@ export type EmploymentRelationship = "internal" | "external";
 // moderation-signoff-policy.md. FPTStaff is the intended master record.
 export type UserSource = "manual" | "fptstaff";
 
-export type QctoRegistrationType = "fisa" | "eisa";
+// "non_qcto": an assessment outside the QCTO rules (internal test, short course, CPD).
+export type QctoRegistrationType = "fisa" | "eisa" | "non_qcto";
+
+// How an assessment entered FPT Exam (restructure doc §2, rule of 9 Sep 2026).
+export type IntakeRoute = "qcto_curricula_builder" | "legacy_saqa" | "built_here" | "curricula_builder_other";
 
 export type InstrumentSource =
   | "manual"
@@ -133,6 +137,8 @@ export interface AssessmentInstrument {
   qctoExtractId: string | null;
   qualityReview: InstrumentQualityReview | null;
   qualityReviewedAt: string | null;
+  intakeRoute: IntakeRoute;
+  externalRef: string | null;
   intakeStatus: IntakeStatus;
   intakeOverrideReason: string | null;
   sourceFiles: string[] | null;
@@ -351,7 +357,7 @@ export interface InstrumentQualityReview {
   bloomAssessment: string; // AI's view of cognitive demand vs the NQF level
   questionIssues: QuestionAlignmentIssue[];
   recommendations: string[];
-  sourceOfOutcomes: "saqa" | "qcto_upload" | "paper_only";
+  sourceOfOutcomes: "saqa" | "qcto_upload" | "own_outcomes" | "curricula_builder" | "paper_only";
   nqfLevel: number | null;
   generatedAt: string;
   model: string;

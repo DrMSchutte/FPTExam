@@ -9,7 +9,7 @@ export const qualificationsRouter = Router();
 
 const createSchema = z.object({
   title: z.string().min(1),
-  qctoRegistrationType: z.enum(["fisa", "eisa"]),
+  qctoRegistrationType: z.enum(["fisa", "eisa", "non_qcto"]),
   aqpReference: z.string().optional(),
   // The SAQA-issued qualification ID/code, e.g. the id= value in
   // allqs.saqa.org.za/showQualification.php?id=. Optional - only needed to

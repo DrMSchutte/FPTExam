@@ -26,7 +26,7 @@ function getClient(): Anthropic {
 
 export interface ReviewInput {
   qualificationTitle: string;
-  qctoRegistrationType: "fisa" | "eisa";
+  qctoRegistrationType: "fisa" | "eisa" | "non_qcto";
   passRule: string;
   questions: Question[];
   answers: Record<string, string>;
@@ -108,7 +108,7 @@ function fmtAnswer(q: Question, answer: string | undefined): string {
 }
 
 function buildPrompt(input: ReviewInput): string {
-  const label = input.qctoRegistrationType === "eisa" ? "EISA" : "FISA";
+  const label = input.qctoRegistrationType === "eisa" ? "QCTO EISA" : input.qctoRegistrationType === "fisa" ? "QCTO FISA" : "summative";
   const blocks = input.questions.map((q, i) => {
     const opts = q.type === "mcq" && q.options ? `\nOptions: ${q.options.join(" | ")}` : "";
     return `--- QUESTION ${i + 1}  (id: ${q.id}, type: ${q.type}, max mark: ${q.maxMark})
@@ -118,7 +118,7 @@ Model answer / rubric (never shown to the learner): ${q.modelAnswerOrRubric ?? "
 LEARNER'S ANSWER: ${fmtAnswer(q, input.answers[q.id])}`;
   });
 
-  return `You are assisting a registered Assessor marking a QCTO ${label} script for the qualification "${input.qualificationTitle}".
+  return `You are assisting a registered Assessor marking a ${label} script for the qualification "${input.qualificationTitle}".
 
 Pass / competency rule for this paper: ${input.passRule || "50% overall"}.
 

@@ -38,6 +38,7 @@ export const employmentRelationshipEnum = pgEnum("employment_relationship", [
 export const qctoRegistrationTypeEnum = pgEnum("qcto_registration_type", [
   "fisa",
   "eisa",
+  "non_qcto", // an assessment outside the QCTO rules (internal test, short course, CPD) - built here or linked from Curricula Builder
 ]);
 
 export const instrumentSourceEnum = pgEnum("instrument_source", [
@@ -46,6 +47,16 @@ export const instrumentSourceEnum = pgEnum("instrument_source", [
   "curricula_builder",
   "qcto_upload",
   "uploaded_paper", // an existing paper + memo uploaded and read into structured form (the primary route from 5 Sep 2026)
+]);
+
+// How an assessment entered FPT Exam (docs/restructure-2026-09-05.md §2, rule of
+// 9 Sep 2026). Fixed at creation. The two Curricula Builder routes never author
+// anything here; the other two are drafted here by the AI and editable.
+export const intakeRouteEnum = pgEnum("intake_route", [
+  "qcto_curricula_builder", // QCTO FISA/EISA - linked in from Curricula Builder only
+  "legacy_saqa", // legacy FISA - drafted from the SAQA record's ELOs/ACs
+  "built_here", // outside the QCTO rules - own outcomes / uploaded document / existing paper
+  "curricula_builder_other", // CPD and other Curricula Builder creations
 ]);
 
 // Where a paper stands on the way into use (docs/restructure-2026-09-05.md §2).
@@ -182,6 +193,9 @@ export const assessmentInstruments = pgTable("assessment_instruments", {
   qualityReviewedAt: timestamp("quality_reviewed_at", { withTimezone: true }),
   // Gate: set from the standard check's verdict; 'override' only via an
   // Administrator's reasoned override (audited).
+  intakeRoute: intakeRouteEnum("intake_route").notNull(),
+  // Curricula Builder's own id for a linked-in assessment (the two CB routes).
+  externalRef: text("external_ref"),
   intakeStatus: intakeStatusEnum("intake_status").notNull().default("checking"),
   intakeOverrideReason: text("intake_override_reason"),
   // For uploaded papers: the original filenames, for the audit trail.
