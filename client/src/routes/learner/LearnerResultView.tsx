@@ -33,6 +33,11 @@ export default function LearnerResultView({ result, onBack }: { result: LearnerR
           </div>
           <p className="text-xs text-ink-faint ml-auto pb-1">Released {fmt(result.signedOffAt)}</p>
         </div>
+        <div className="mt-5 pt-4 border-t border-line flex items-center gap-3 flex-wrap">
+          <a href={`/api/sessions/${result.sessionId}/statement.pdf?download=1`} className="btn">Download my Statement of Results (PDF)</a>
+          <a href={`/api/sessions/${result.sessionId}/statement.pdf`} target="_blank" rel="noreferrer" className="lnk">Open in a new tab</a>
+          <span className="t-sub">Your formal record of this result — keep it with your documents.</span>
+        </div>
         {result.overallFeedback && (
           <div className="mt-5 pt-4 border-t border-line">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted mb-1">Assessor's feedback</p>

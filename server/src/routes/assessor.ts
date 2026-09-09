@@ -17,6 +17,8 @@ import {
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
 import { enqueueJob } from "../jobs/runner.js";
 import { integrityReportFor, writeIntegrityReport } from "../proctoring/integrity.js";
+import { loadStatement, renderStatement } from "../results/statement.js";
+import { appBaseUrl } from "../auth/setupLinks.js";
 import type { Question, QuestionMark, SuggestionReview, Outcome } from "../types.js";
 
 // Phase C: the Assessor's marking workflow and the single result gate.
@@ -429,6 +431,8 @@ assessorRouter.post("/sessions/:id/sign-off", requireAuth, requireRole("assessor
       })
       .returning();
     await tx.insert(backgroundJobs).values({ jobType: "fptstaff_push", payload: { pushId: push.id }, status: "pending" });
+    // Block 5d: tell the learner (email; recorded on Results whether it went).
+    await tx.insert(backgroundJobs).values({ jobType: "result_email", payload: { sessionId: session.id, baseUrl: appBaseUrl(req) }, status: "pending" });
 
     // (5) Audit.
     await tx.insert(auditLog).values({
@@ -495,4 +499,38 @@ assessorRouter.get("/sessions/:id/result", requireAuth, requireRole("learner"), 
     // signed off the result it sits beside; it is labelled as such in the UI.
     gapMap: review?.gapMap ?? [],
   });
+});
+
+// ---- Block 5d: the Statement of Results --------------------------------------
+//
+//   GET  /sessions/:id/statement.pdf        learner (own, released), assessor of record, administrator
+//   POST /sessions/:id/resend-result-email  administrator
+
+assessorRouter.get("/sessions/:id/statement.pdf", requireAuth, async (req: AuthedRequest, res) => {
+  if (req.auth!.sittingSession) return res.status(403).json({ error: "Sign in with your account to download your statement." });
+  const [row] = await db
+    .select({ learnerId: learnerSessions.learnerId, assessorId: examSittings.assignedAssessorId })
+    .from(learnerSessions)
+    .innerJoin(examSittings, eq(examSittings.id, learnerSessions.sittingId))
+    .where(eq(learnerSessions.id, req.params.id));
+  if (!row) return res.status(404).json({ error: "Not found." });
+  const roles = req.auth!.roles;
+  const allowed = roles.includes("administrator") || (roles.includes("assessor") && row.assessorId === req.auth!.userId) || (roles.includes("learner") && row.learnerId === req.auth!.userId);
+  if (!allowed) return res.status(403).json({ error: "Not your statement." });
+  const data = await loadStatement(req.params.id);
+  if (!data) return res.status(404).json({ error: "No released result for this session." });
+  const pdf = await renderStatement(data);
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "statement_downloaded", targetType: "learner_session", targetId: req.params.id, reason: data.statementNumber });
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `${req.query.download ? "attachment" : "inline"}; filename="Statement-of-Results-${data.statementNumber}.pdf"`);
+  res.setHeader("Cache-Control", "private, no-store");
+  return res.send(pdf);
+});
+
+assessorRouter.post("/sessions/:id/resend-result-email", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
+  const [d] = await db.select({ signedOffAt: assessorDecisions.signedOffAt }).from(assessorDecisions).where(eq(assessorDecisions.sessionId, req.params.id));
+  if (!d?.signedOffAt) return res.status(409).json({ error: "This result has not been signed off." });
+  const [job] = await db.insert(backgroundJobs).values({ jobType: "result_email", payload: { sessionId: req.params.id, baseUrl: appBaseUrl(req) }, status: "pending" }).returning({ id: backgroundJobs.id });
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "result_email_resent", targetType: "learner_session", targetId: req.params.id });
+  return res.json({ ok: true, jobId: job.id });
 });

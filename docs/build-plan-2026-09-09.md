@@ -200,7 +200,30 @@ recommendation, the findings, the identity photo, the masked ID and student numb
 *See the evidence* for the same timeline — so an irregular sitting is never signed off
 unknowingly. The assessor of record may view the console and the evidence but cannot act
 on a live paper; an invigilator sees only their own sittings.
-*Still to come:* 5d the Statement of Results (with the integrity summary) and the result email.
+**5d — the Statement of Results and the result email (delivered 10 Sep 2026).** The
+moment an assessor signs off, the learner's **Statement of Results** exists: one A4 PDF,
+FPT Academy branding (green rule, blue title), confidential header and footer, a
+statement number (`FPT-SR-<year>-<10 chars>`). It carries the learner's name, **full ID
+number** and student number (the only document that does — everywhere else the ID is
+masked), the qualification with SAQA ID and assessment type (FISA / EISA), the paper, the
+sitting date, time and venue, the submission time, the **outcome**, total mark and
+percentage in a highlighted box, **marks per exit-level outcome** (questions grouped by
+their ELO, with totals), the assessor's overall feedback, the **sitting-integrity**
+statement (what was captured, how it was submitted, any findings the assessor reviewed),
+the assessor's name and sign-off time, and a verification line with the exam-record ID and
+seal. The learner downloads it from their result (*Download my Statement of Results*); the
+assessor has it on the signed-off dossier; the Administrator has a *Statement* link on
+every Results row. Every download is audited. Only the learner themself (signed in with
+their account, not a sitting code), the assessor of record and an Administrator may open
+it, and never before sign-off. The **result email** is queued at sign-off and tells the
+learner their result is released with a sign-in link — it never carries the result itself.
+The Results page shows per learner whether they were told (*Emailed*, *Email not
+connected*, *Email failed*, *Sending…*) with *Send again*; until the SMTP secrets are set
+the status reads *Email not connected* and nothing is lost — *Send again* delivers once
+email is connected.
+**Block 5 is complete.** The end-to-end sitting — codes, check-in, locked paper,
+invigilator console, integrity summary, assessor sign-off, Statement of Results — runs
+and is tested in a real browser.
 
 ### Block 6 — Phase E: FPTStaff connection
 *What you get:* People and cohorts pulled from FPTStaff by section; manual adds pushed

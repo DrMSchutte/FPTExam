@@ -262,6 +262,7 @@ export default function AssessorDossier() {
             <div>
               <p className="field-lbl">Signed off</p>
               <p className="text-sm font-semibold">{fmt(dossier.decision.signedOffAt)}</p>
+              <a href={`/api/sessions/${dossier.session.id}/statement.pdf`} target="_blank" rel="noreferrer" className="lnk block mt-1">Statement of Results (PDF)</a>
             </div>
             <p className="text-[12.5px] text-ink-muted ml-auto max-w-sm">
               This result is final and visible to the learner. It has been queued for FPTStaff, where moderation and verification run for passed learners.

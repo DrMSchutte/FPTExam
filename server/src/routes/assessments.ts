@@ -696,7 +696,21 @@ async function resultRows(f: z.infer<typeof resultsQuery>) {
   const assessorIds = [...new Set(rows.map((r) => r.assessorId))];
   const assessors = assessorIds.length ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, assessorIds)) : [];
   const nameOf = new Map(assessors.map((a) => [a.id, a.name]));
-  return rows.map((r) => ({ ...r, assessorName: nameOf.get(r.assessorId) ?? "—", idNumberMasked: r.idNumberLast4 ? `••••••••• ${r.idNumberLast4}` : null }));
+  // Block 5d: the latest result-email job per session (sent / not connected / queued / failed).
+  const emailJobs = rows.length
+    ? await db.execute<{ session_id: string; status: string; result: { sent?: boolean; reason?: string; at?: string; detail?: string } | null; created_at: Date }>(sql`
+        SELECT DISTINCT ON (payload->>'sessionId') payload->>'sessionId' AS session_id, status, result, created_at
+          FROM background_jobs
+         WHERE job_type = 'result_email' AND payload->>'sessionId' = ANY(${sql.raw(`ARRAY[${rows.map((r) => r.sessionId).filter((id) => /^[0-9a-f-]{36}$/i.test(id)).map((id) => `'${id}'`).join(",")}]::text[]`)})
+         ORDER BY payload->>'sessionId', created_at DESC`)
+    : { rows: [] as never[] };
+  const emailOf = new Map<string, { status: "sent" | "not_connected" | "queued" | "failed"; detail: string | null; at: string | null }>();
+  for (const j of emailJobs.rows) {
+    const r = j.result ?? {};
+    const status = j.status === "done" ? (r.sent ? "sent" : "not_connected") : j.status === "failed" ? "failed" : "queued";
+    emailOf.set(j.session_id, { status, detail: r.reason ?? r.detail ?? null, at: r.at ?? null });
+  }
+  return rows.map((r) => ({ ...r, assessorName: nameOf.get(r.assessorId) ?? "—", idNumberMasked: r.idNumberLast4 ? `••••••••• ${r.idNumberLast4}` : null, resultEmail: emailOf.get(r.sessionId) ?? null }));
 }
 
 assessmentsRouter.get("/results", requireAuth, requireRole("administrator"), async (req, res) => {

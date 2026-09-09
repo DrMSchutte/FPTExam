@@ -77,3 +77,23 @@ FPT Academy`;
 <p>FPT Academy</p></div>`;
   return { subject: "Set up your FPT Exam sign-in", text, html };
 }
+
+// Block 5d: the result-released email. Never carries the result itself - the
+// learner signs in to see it and to download the Statement of Results.
+export function resultReleasedEmail(p: { name: string; qualificationTitle: string; loginUrl: string }) {
+  const text = `Hello ${p.name}
+
+Your result for ${p.qualificationTitle} has been released by the assessor.
+
+Sign in to FPT Exam to see your result, the assessor's feedback and to download your Statement of Results:
+${p.loginUrl}
+
+FPT Academy`;
+  const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;color:#1c2a1f;line-height:1.5;max-width:560px">
+<p>Hello ${esc(p.name)}</p>
+<p>Your result for <strong>${esc(p.qualificationTitle)}</strong> has been released by the assessor.</p>
+<p><a href="${esc(p.loginUrl)}" style="display:inline-block;background:#6BBF3E;color:#fff;text-decoration:none;font-weight:bold;padding:12px 20px;border-radius:8px">See my result</a></p>
+<p style="font-size:13px;color:#5d6b60">Sign in to see your result, the assessor's feedback, and to download your Statement of Results. Or copy this link: ${esc(p.loginUrl)}</p>
+<p>FPT Academy</p></div>`;
+  return { subject: `Your result for ${p.qualificationTitle} has been released`, text, html };
+}

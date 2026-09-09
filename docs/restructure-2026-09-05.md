@@ -144,7 +144,16 @@ question type and wording, as well as by the moderator's reading) until it is re
 a scenario, case-study or worked task answered in writing during the sitting.
 
 ### Results (new)
-Administrator's read-only view of signed-off results and their FPTStaff push status.
+Administrator's read-only view of signed-off results and their FPTStaff push status;
+since Block 5d also whether the learner has been told (result email) with *Send again*,
+and the *Statement* link per row.
+
+### Statement of Results (Block 5d, 10 Sep 2026)
+The learner's formal record of a signed-off result: a branded A4 PDF with the full ID
+number and student number, qualification and paper, sitting, outcome, marks per
+exit-level outcome, integrity statement, assessor sign-off, statement number and seal.
+Available to the learner (their account), the assessor of record and the Administrator
+only after sign-off; every download audited.
 
 ## 3. Marking: AI assesses, assessor endorses
 

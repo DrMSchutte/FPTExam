@@ -45,7 +45,7 @@ async function claimNext() {
        SELECT id FROM background_jobs
         WHERE status = 'pending'
           AND run_after <= now()
-          AND job_type IN ('ai_response_review', 'fptstaff_push')
+          AND job_type IN ('ai_response_review', 'fptstaff_push', 'result_email')
         ORDER BY created_at
         LIMIT 1
         FOR UPDATE SKIP LOCKED
@@ -103,6 +103,27 @@ async function runFptstaffPush(payload: { pushId: string }) {
   throw new Error("FPTStaff delivery is not implemented yet (Phase E).");
 }
 
+// Block 5d: tell the learner their result is out. Not configured email is a
+// completed job with sent:false (shown on Results), not a failure to retry.
+async function runResultEmail(payload: { sessionId: string; baseUrl?: string }) {
+  const { sendMail, resultReleasedEmail, isMailConfigured } = await import("../email/mailer.js");
+  const { learnerSessions, examSittings, qualifications, users } = await import("../db/schema.js");
+  const [row] = await db
+    .select({ name: users.name, email: users.email, qualificationTitle: qualifications.title })
+    .from(learnerSessions)
+    .innerJoin(users, eq(users.id, learnerSessions.learnerId))
+    .innerJoin(examSittings, eq(examSittings.id, learnerSessions.sittingId))
+    .innerJoin(qualifications, eq(qualifications.id, examSittings.qualificationId))
+    .where(eq(learnerSessions.id, payload.sessionId));
+  if (!row) return { sent: false, reason: "Session not found." };
+  if (!isMailConfigured()) return { sent: false, to: row.email, reason: "Email is not connected yet (SMTP secrets not set)." };
+  const base = (payload.baseUrl ?? process.env.APP_BASE_URL ?? "").replace(/\/+$/, "");
+  const mail = resultReleasedEmail({ name: row.name, qualificationTitle: row.qualificationTitle, loginUrl: `${base}/login` });
+  const r = await sendMail({ to: row.email, ...mail });
+  if (!r.sent) throw new Error(r.reason ?? "Email failed.");
+  return { sent: true, to: row.email, at: new Date().toISOString() };
+}
+
 async function runOne(job: { id: string; job_type: string; payload: Record<string, unknown>; attempts: number }) {
   try {
     let result: Record<string, unknown>;
@@ -110,6 +131,8 @@ async function runOne(job: { id: string; job_type: string; payload: Record<strin
       result = await runAiResponseReview(job.payload as { sessionId: string });
     } else if (job.job_type === "fptstaff_push") {
       result = await runFptstaffPush(job.payload as { pushId: string });
+    } else if (job.job_type === "result_email") {
+      result = await runResultEmail(job.payload as { sessionId: string; baseUrl?: string });
     } else {
       throw new Error(`Unknown job type ${job.job_type}`);
     }
@@ -159,7 +182,7 @@ export function startJobRunner() {
     .where(
       and(
         eq(backgroundJobs.status, "running"),
-        sql`${backgroundJobs.jobType} IN ('ai_response_review', 'fptstaff_push')`,
+        sql`${backgroundJobs.jobType} IN ('ai_response_review', 'fptstaff_push', 'result_email')`,
         lte(backgroundJobs.attempts, MAX_ATTEMPTS)
       )
     )

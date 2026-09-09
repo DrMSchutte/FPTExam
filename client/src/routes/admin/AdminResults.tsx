@@ -27,6 +27,7 @@ interface ResultRow {
   assessorName: string;
   pushStatus: "pending" | "sent" | "failed" | null;
   pushSentAt: string | null;
+  resultEmail: { status: "sent" | "not_connected" | "queued" | "failed"; detail: string | null; at: string | null } | null;
 }
 
 const fmt = (iso: string | null) =>
@@ -66,6 +67,12 @@ export default function AdminResults() {
   }, [f.cohortId, f.qualificationId, f.outcome, f.from, f.to, debouncedQ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const competent = rows?.filter((r) => r.outcome === "competent").length ?? 0;
+  async function resend(r: ResultRow) {
+    try {
+      await api.post(`/sessions/${r.sessionId}/resend-result-email`);
+      setRows((rows) => rows?.map((x) => (x.sessionId === r.sessionId ? { ...x, resultEmail: { status: "queued", detail: null, at: null } } : x)) ?? null);
+    } catch (err) { setError((err as Error).message); }
+  }
   const pending = rows?.filter((r) => r.pushStatus !== "sent").length ?? 0;
 
   return (
@@ -130,7 +137,9 @@ export default function AdminResults() {
                 <th>Sat</th>
                 <th>Result</th>
                 <th>Signed off</th>
+                <th>Learner told</th>
                 <th>FPTStaff</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -162,6 +171,22 @@ export default function AdminResults() {
                     <p className="t-sub">{r.assessorName}</p>
                   </td>
                   <td>
+                    {r.resultEmail?.status === "sent" ? (
+                      <Badge tone="green">Emailed {fmt(r.resultEmail.at)}</Badge>
+                    ) : r.resultEmail?.status === "not_connected" ? (
+                      <span title={r.resultEmail.detail ?? ""}><Badge tone="amber">Email not connected</Badge></span>
+                    ) : r.resultEmail?.status === "failed" ? (
+                      <span title={r.resultEmail.detail ?? ""}><Badge tone="amber">Email failed</Badge></span>
+                    ) : r.resultEmail ? (
+                      <Badge tone="gray">Sending…</Badge>
+                    ) : (
+                      <Badge tone="gray">—</Badge>
+                    )}
+                    {r.resultEmail && r.resultEmail.status !== "sent" && r.resultEmail.status !== "queued" && (
+                      <button type="button" className="lnk block mt-1 text-[12px]" onClick={() => resend(r)}>Send again</button>
+                    )}
+                  </td>
+                  <td>
                     {r.pushStatus === "sent" ? (
                       <Badge tone="green">Sent {fmt(r.pushSentAt)}</Badge>
                     ) : r.pushStatus === "failed" ? (
@@ -169,6 +194,9 @@ export default function AdminResults() {
                     ) : (
                       <Badge tone="gray">Queued</Badge>
                     )}
+                  </td>
+                  <td className="text-right whitespace-nowrap">
+                    <a href={`/api/sessions/${r.sessionId}/statement.pdf`} target="_blank" rel="noreferrer" className="lnk">Statement</a>
                   </td>
                 </tr>
               ))}
