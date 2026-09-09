@@ -79,6 +79,7 @@ async function start() {
     console.log("Database schema is up to date.");
     const admin = await ensureBootstrapAdmin();
     if (admin === "created") console.log(`Bootstrap administrator created: ${process.env.ADMIN_EMAIL}`);
+    else if (admin === "recovered") console.warn(`Administrator ${process.env.ADMIN_EMAIL} recovered - sign in with ADMIN_PASSWORD, then remove the ADMIN_RECOVER secret.`);
     else if (admin === "skipped")
       console.warn("ADMIN_EMAIL / ADMIN_PASSWORD not set - no bootstrap administrator created.");
     const hashed = await backfillIdNumberHashes();
