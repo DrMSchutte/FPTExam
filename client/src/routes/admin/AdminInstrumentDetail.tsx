@@ -109,6 +109,13 @@ export default function AdminInstrumentDetail() {
   const [saving, setSaving] = useState(false);
   const [fixing, setFixing] = useState(false);
   const [fixNotes, setFixNotes] = useState<string | null>(null);
+  // Outcomes & criteria editor
+  const [editingOutcomes, setEditingOutcomes] = useState(false);
+  const [eloText, setEloText] = useState("");
+  const [acText, setAcText] = useState("");
+  const [tidying, setTidying] = useState(false);
+  const [tidyNote, setTidyNote] = useState<string | null>(null);
+  const [savingOutcomes, setSavingOutcomes] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -196,6 +203,67 @@ export default function AdminInstrumentDetail() {
       setError((err as Error).message);
     } finally {
       setChecking(false);
+    }
+  }
+
+  async function beginEditOutcomes() {
+    if (!id) return;
+    setError(null);
+    setMessage(null);
+    setTidyNote(null);
+    try {
+      const o = await api.get<{ exitLevelOutcomes: string[]; assessmentCriteria: string[] }>(`/instruments/${id}/outcomes`);
+      setEloText(o.exitLevelOutcomes.join("\n"));
+      setAcText(o.assessmentCriteria.join("\n"));
+      setEditingOutcomes(true);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  const lines = (t: string) => t.split(/\r?\n/).map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)]|ELO\s*\d+[:.]?|AC\s*\d+(?:\.\d+)*[:.]?)\s*/i, "").trim()).filter(Boolean);
+
+  async function tidyOutcomes() {
+    if (!id) return;
+    setError(null);
+    setTidying(true);
+    try {
+      const n = await api.post<{ exitLevelOutcomes: string[]; assessmentCriteria: string[]; changed: boolean; notes: string }>(`/instruments/${id}/outcomes/tidy`, {
+        exitLevelOutcomes: lines(eloText),
+        assessmentCriteria: lines(acText),
+      });
+      setEloText(n.exitLevelOutcomes.join("\n"));
+      setAcText(n.assessmentCriteria.join("\n"));
+      setTidyNote(n.changed ? `Tidied: ${n.notes} Review the lists, then Save and re-check.` : "Nothing to tidy — the lists already read as one competence per line.");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setTidying(false);
+    }
+  }
+
+  async function saveOutcomes() {
+    if (!id) return;
+    setError(null);
+    const elos = lines(eloText);
+    if (elos.length === 0) return setError("Give at least one exit level outcome, one per line.");
+    setSavingOutcomes(true);
+    setProgress(null);
+    try {
+      const { jobId } = await api.put<{ jobId: string }>(`/instruments/${id}/outcomes`, { exitLevelOutcomes: elos, assessmentCriteria: lines(acText) });
+      setEditingOutcomes(false);
+      setChecking(true);
+      try {
+        await pollJob(`/instruments/jobs/${jobId}`, { onProgress: setProgress });
+        setMessage("Outcomes saved. The paper was re-checked against them.");
+      } finally {
+        setChecking(false);
+      }
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSavingOutcomes(false);
     }
   }
 
@@ -388,6 +456,57 @@ export default function AdminInstrumentDetail() {
         {instrument.externalRef ? ` · Curricula Builder ref ${instrument.externalRef}` : ""}
         {!editable && " · Read-only on FPT Exam: corrections are made on Curricula Builder and pulled in as a new version."}
       </p>
+
+      {/* ---------------- Outcomes & criteria (what the check measures against) ---------------- */}
+      {editable && (
+        <Card className="mt-5">
+          <CardHead
+            title="Outcomes and criteria the check measures against"
+            subtitle={
+              review?.sourceOfOutcomes === "saqa"
+                ? "As read from the SAQA record. If SAQA's list is untidy — preambles, run-on lists, exit-point notes — tidy or edit it here and the check runs again."
+                : review?.sourceOfOutcomes === "own_outcomes"
+                  ? "As given by the Administrator. Edit them here and the check runs again."
+                  : "The reference list for this paper. Edit it here and the check runs again."
+            }
+            right={
+              !editingOutcomes ? (
+                <button type="button" className="btn-ghost btn-sm" onClick={beginEditOutcomes} disabled={checking || fixing}>
+                  Edit outcomes
+                </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button type="button" className="btn-ghost btn-sm" onClick={tidyOutcomes} disabled={tidying || savingOutcomes}>
+                    {tidying ? "Tidying…" : "Tidy up with AI"}
+                  </button>
+                  <button type="button" className="btn-ghost btn-sm" onClick={() => setEditingOutcomes(false)} disabled={savingOutcomes}>
+                    Cancel
+                  </button>
+                  <button type="button" className="btn btn-sm" onClick={saveOutcomes} disabled={savingOutcomes || tidying}>
+                    {savingOutcomes ? "Saving…" : "Save and re-check"}
+                  </button>
+                </div>
+              )
+            }
+          />
+          {editingOutcomes && (
+            <div className="px-5 pb-5 space-y-3">
+              {tidyNote && <p className="text-[13px] rounded-lg border border-brand-100 bg-brand-50/40 px-3 py-2">{tidyNote}</p>}
+              <div className="grid grid-cols-2 gap-3.5">
+                <div>
+                  <label className="field-lbl">Exit level outcomes <span className="normal-case font-normal text-ink-faint">(one per line · {lines(eloText).length})</span></label>
+                  <textarea className="inp font-normal text-[13px]" rows={14} value={eloText} onChange={(e) => setEloText(e.target.value)} />
+                </div>
+                <div>
+                  <label className="field-lbl">Assessment criteria <span className="normal-case font-normal text-ink-faint">(one per line · {lines(acText).length})</span></label>
+                  <textarea className="inp font-normal text-[13px]" rows={14} value={acText} onChange={(e) => setAcText(e.target.value)} />
+                </div>
+              </div>
+              <p className="t-sub">Each line should be one competence a learner demonstrates. Remove preambles, exit-point notes and text about how assessment is conducted — a paper cannot "cover" those. Saving keeps the original SAQA/document list on record and re-runs the check against your list.</p>
+            </div>
+          )}
+        </Card>
+      )}
 
       {/* ---------------- Standard check ---------------- */}
       {review ? (

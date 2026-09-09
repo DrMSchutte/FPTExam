@@ -52,6 +52,16 @@ version is kept and can be restored. **Edit the questions** by hand — the chec
 save. **Override with a reason** — audited. Curricula Builder papers get none of these:
 they are corrected at their source and pulled again.
 
+### The outcomes list itself can be wrong (added 9 Sep 2026)
+SAQA's legacy records often read as a preamble, one run-on entry holding twenty
+competences, exit-point and credit-transfer notes, and procedural text about integrated
+assessment - none of which a paper can cover, so the check fails for the wrong reason.
+Two remedies: SAQA lists that look malformed are **tidied by the AI at fetch time** (split
+run-ons, drop non-outcomes; the raw read stays on record), and on the assessment page the
+Administrator can **edit the outcomes and criteria** the check measures against (one per
+line, with a *Tidy up with AI* helper); saving re-runs the check. Curricula Builder
+papers: the list comes from Curricula Builder and is not edited here.
+
 ### Every sitting is proctored (decision 8 Sep 2026)
 FPT Exam is a QCTO proctored exam site to the QCTO requirement. There is no unproctored,
 "just exam" or practice mode and no per-assessment supervision setting — a sitting on FPT

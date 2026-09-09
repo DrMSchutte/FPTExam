@@ -24,6 +24,7 @@ import {
   CurriculaBuilderError,
 } from "../integrations/curriculaBuilder/client.js";
 import { extractPaper, PaperExtractionError } from "../ai/paperExtraction.js";
+import { normaliseOutcomes, looksMalformed } from "../ai/outcomeNormalisation.js";
 import { generateInstrumentFromOutcomes } from "../ai/instrumentGeneration.js";
 import { extractOutcomesFromDocumentText, DocumentOutcomeExtractionError } from "../ai/documentOutcomeExtraction.js";
 import { startJob, runInBackground, setProgress, runStandardCheck, wordsProgress, type JobOutcome } from "./instruments.js";
@@ -59,6 +60,21 @@ const splitLines = (s?: string) =>
     .split(/\r?\n/)
     .map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)]|[A-Za-z]{1,3}\s*\d+(?:\.\d+)*[.):]?)\s+/, "").trim())
     .filter(Boolean);
+
+// SAQA's legacy pages often come through with preambles, run-on lists and
+// exit-point notes among the outcomes. Tidy them before anything is measured
+// against them; the raw read is kept in the job's notes for the audit trail.
+async function tidySaqa(extract: Awaited<ReturnType<typeof fetchSaqaExtract>>, title: string, warnings: string[]) {
+  if (!looksMalformed(extract.exitLevelOutcomes, extract.assessmentCriteria)) return extract;
+  try {
+    const n = await normaliseOutcomes({ qualificationTitle: title, exitLevelOutcomes: extract.exitLevelOutcomes, assessmentCriteria: extract.assessmentCriteria });
+    if (n.changed) warnings.push(`SAQA's list was tidied before use (${extract.exitLevelOutcomes.length} → ${n.exitLevelOutcomes.length} outcomes, ${extract.assessmentCriteria.length} → ${n.assessmentCriteria.length} criteria). ${n.notes}`);
+    return { ...extract, exitLevelOutcomes: n.exitLevelOutcomes, assessmentCriteria: n.assessmentCriteria };
+  } catch (err) {
+    warnings.push(`SAQA's list could not be tidied (${err instanceof Error ? err.message : String(err)}); used as read.`);
+    return extract;
+  }
+}
 
 // The tail every drafting route shares once outcomes and criteria are in hand: draft the
 // paper, save it, run the standard check (= the gate), report.
@@ -166,6 +182,8 @@ assessmentsRouter.post("/legacy-saqa/draft", requireAuth, requireRole("administr
     }
 
     await setProgress(jobId, 2, total, "Extracting outcomes and criteria", `${extract.exitLevelOutcomes.length} Exit Level Outcomes, ${extract.assessmentCriteria.length} Assessment Criteria${extract.nqfLevel ? `, NQF Level ${extract.nqfLevel}` : ""}`);
+    const warnings: string[] = [];
+    extract = await tidySaqa(extract, extract.title ?? `SAQA ${saqaId}`, warnings);
 
     let [qualification] = await db.select().from(qualifications).where(eq(qualifications.saqaQualificationId, saqaId));
     if (!qualification) {
@@ -190,7 +208,7 @@ assessmentsRouter.post("/legacy-saqa/draft", requireAuth, requireRole("administr
       })
       .returning();
 
-    return draftSaveCheck(jobId, { from: 3, total }, {
+    const outcome = await draftSaveCheck(jobId, { from: 3, total }, {
       qualification,
       exitLevelOutcomes: extract.exitLevelOutcomes,
       assessmentCriteria: extract.assessmentCriteria,
@@ -202,6 +220,8 @@ assessmentsRouter.post("/legacy-saqa/draft", requireAuth, requireRole("administr
       intakeRoute: "legacy_saqa",
       saqaExtractId: extractRow.id,
     });
+    if ("coverageNotes" in outcome && warnings.length) outcome.coverageNotes = [...warnings, outcome.coverageNotes].filter(Boolean).join("\n\n");
+    return outcome;
   });
 
   return res.status(202).json({ jobId });
@@ -419,6 +439,7 @@ assessmentsRouter.post(
             detail: `SAQA ${saqaId} is "${saqa.title}". Its FISA/EISA paper must be linked in from Curricula Builder.`,
           };
         }
+        if (saqa) saqa = await tidySaqa(saqa, saqa.title ?? `SAQA ${saqaId}`, warnings);
         if (!qualification) [qualification] = await db.select().from(qualifications).where(eq(qualifications.saqaQualificationId, saqaId));
         if (!qualification) {
           if (!saqa?.title) return { error: "SAQA did not give a qualification title for that ID.", detail: "Check the SAQA ID and try again." };

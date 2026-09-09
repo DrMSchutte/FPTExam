@@ -13,6 +13,8 @@ import {
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
 import { reviewInstrumentAgainstStandard } from "../ai/instrumentQualityReview.js";
 import { reviseInstrumentToStandard, markLimit } from "../ai/instrumentRevision.js";
+import { normaliseOutcomes } from "../ai/outcomeNormalisation.js";
+
 import type { ProgressHook } from "../ai/longCall.js";
 
 // Progress detail for a streamed AI call: "…about 1,400 words written so far".
@@ -419,6 +421,75 @@ instrumentsRouter.post(
     return res.status(202).json({ jobId });
   }
 );
+
+// ---- The outcomes and criteria a paper is measured against ---------------------
+//
+// Readable for every paper; editable (and tidy-able by AI) for papers drafted
+// here. Saving writes a new reference list, points the paper at it, and re-runs
+// the check. The list that came from SAQA or the document stays on record.
+
+instrumentsRouter.get("/:id/outcomes", requireAuth, requireRole("administrator"), async (req, res) => {
+  const [row] = await db.select().from(assessmentInstruments).where(eq(assessmentInstruments.id, req.params.id));
+  if (!row) return res.status(404).json({ error: "Instrument not found." });
+  const ctx = await outcomesForInstrument(row);
+  return res.json({ exitLevelOutcomes: ctx.exitLevelOutcomes, assessmentCriteria: ctx.assessmentCriteria, sourceOfOutcomes: ctx.sourceOfOutcomes });
+});
+
+// AI tidy-up of the current list - returns a proposal; nothing is saved until PUT.
+instrumentsRouter.post("/:id/outcomes/tidy", requireAuth, requireRole("administrator"), async (req, res) => {
+  const [row] = await db.select().from(assessmentInstruments).where(eq(assessmentInstruments.id, req.params.id));
+  if (!row) return res.status(404).json({ error: "Instrument not found." });
+  const ctx = await outcomesForInstrument(row);
+  const body = req.body ?? {};
+  const elos: string[] = Array.isArray(body.exitLevelOutcomes) ? body.exitLevelOutcomes : ctx.exitLevelOutcomes;
+  const acs: string[] = Array.isArray(body.assessmentCriteria) ? body.assessmentCriteria : ctx.assessmentCriteria;
+  if (elos.length === 0) return res.status(400).json({ error: "There are no outcomes to tidy." });
+  const n = await normaliseOutcomes({ qualificationTitle: ctx.qualification.title, exitLevelOutcomes: elos, assessmentCriteria: acs });
+  return res.json(n);
+});
+
+const outcomesSchema = z.object({
+  exitLevelOutcomes: z.array(z.string().trim().min(1)).min(1),
+  assessmentCriteria: z.array(z.string().trim().min(1)),
+});
+
+instrumentsRouter.put("/:id/outcomes", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
+  const parsed = outcomesSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Give at least one outcome, one per line.", detail: parsed.error.message });
+  const [row] = await db.select().from(assessmentInstruments).where(eq(assessmentInstruments.id, req.params.id));
+  if (!row) return res.status(404).json({ error: "Instrument not found." });
+  if (row.intakeRoute === "qcto_curricula_builder" || row.intakeRoute === "curricula_builder_other") {
+    return res.status(409).json({ error: "This paper's outcomes come from Curricula Builder and are not edited here." });
+  }
+  const [ex] = await db
+    .insert(qctoDocumentExtracts)
+    .values({ qualificationId: row.qualificationId, originalFilename: "typed:administrator (edited outcomes)", exitLevelOutcomes: parsed.data.exitLevelOutcomes, assessmentCriteria: parsed.data.assessmentCriteria })
+    .returning();
+  await db
+    .update(assessmentInstruments)
+    .set({ qctoExtractId: ex.id, saqaExtractId: null, intakeStatus: row.intakeStatus === "override" ? "override" : "checking" })
+    .where(eq(assessmentInstruments.id, row.id));
+  await db.insert(auditLog).values({
+    actorId: req.auth!.userId,
+    action: "instrument_outcomes_edited",
+    targetType: "assessment_instrument",
+    targetId: row.id,
+    reason: `${parsed.data.exitLevelOutcomes.length} outcomes, ${parsed.data.assessmentCriteria.length} criteria`,
+  });
+  const jobId = await startJob("ai_instrument_quality_check", { instrumentId: row.id, reason: "outcomes edited" });
+  runInBackground(jobId, async () => {
+    await setProgress(jobId, 1, 2, "Checking the paper against the edited outcomes");
+    try {
+      await runStandardCheck(row.id, wordsProgress(jobId, 1, 2, "Checking the paper against the edited outcomes", "moderator's report"));
+    } catch (err) {
+      await db.update(assessmentInstruments).set({ intakeStatus: "blocked" }).where(eq(assessmentInstruments.id, row.id));
+      return { error: "The assessment-standard check failed.", detail: err instanceof Error ? err.message : String(err) };
+    }
+    await setProgress(jobId, 2, 2, "Saved");
+    return { instrumentId: row.id, qualityCheck: true as const };
+  });
+  return res.status(202).json({ jobId });
+});
 
 // Administrator override of the gate for a paper the check marked as not
 // meeting the standard. Needs a reason; recorded in the audit log.
