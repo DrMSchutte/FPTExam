@@ -155,6 +155,8 @@ Model answer / rubric: ${q.modelAnswerOrRubric ?? "(none)"}`
 
   return `You are an assessment moderator working to QCTO standards, checking whether a ${label} assessment paper for "${input.qualificationTitle}" (${input.nqfLevel ? `NQF Level ${input.nqfLevel}` : "NQF level not recorded"}) meets the full requirement of the assessment standard.
 
+The paper is sat as a proctored, closed-book examination in one timed session on a locked screen: no internet, no sources, no files or uploads, no workplace or interview tasks, nothing done over days. Any question that cannot be fully answered there and then, in writing, from the learner's own knowledge plus what the question supplies, is an assignment task rather than an exam question - report it as a critical questionIssue.
+
 The standard means: every registered Exit Level Outcome AND every Associated Assessment Criterion is assessed by at least one question that genuinely evidences it; the cognitive demand (revised Bloom's taxonomy) matches the NQF level - competence is shown by application, analysis and evaluation, not recall alone; each question has a rubric an assessor can mark consistently; marks are weighted in proportion to importance; the paper is answerable in the time.
 
 Facts already computed from the paper (use them, don't recompute):
@@ -231,17 +233,63 @@ export async function reviewInstrumentAgainstStandard(input: QualityReviewInput,
     );
   }
 
+  // Deterministic sitting rule: a question that needs research, a workplace,
+  // other people or an upload cannot be answered in a proctored sitting. It is
+  // an assignment task, and the paper is blocked until it is replaced.
+  const questionIssues = (raw.questionIssues ?? []).filter((i) => qById.has(i.questionId));
+  const assignmentLike = input.questions.filter((q) => looksLikeAssignmentTask(q));
+  for (const q of assignmentLike) {
+    const idx = input.questions.indexOf(q) + 1;
+    if (!questionIssues.some((i) => i.questionId === q.id && /sitting|assignment|research|upload/i.test(i.issue))) {
+      questionIssues.unshift({
+        questionId: q.id,
+        severity: "critical",
+        issue: `Q${idx} is an assignment task, not an exam question: it asks the learner to ${assignmentVerb(q)}, which cannot be done in a proctored, closed-book sitting.`,
+        suggestion: "Replace it with a scenario, case study or worked task on the same outcome that the learner answers in writing during the sitting.",
+      });
+    }
+  }
+  if (assignmentLike.length) {
+    verdict = "does_not_meet";
+    recommendations.unshift(
+      `${assignmentLike.length === 1 ? "One question" : `${assignmentLike.length} questions`} (${assignmentLike.map((q) => `Q${input.questions.indexOf(q) + 1}`).join(", ")}) cannot be answered in a proctored sitting - ${assignmentLike.length === 1 ? "it asks" : "they ask"} for research, outside sources, a workplace task or a document upload. Replace with in-sitting tasks on the same outcomes (Fix the gaps does this).`
+    );
+  }
+
   return {
     verdict,
     summary: raw.summary ?? "",
     profile,
     coverage,
     bloomAssessment: raw.bloomAssessment ?? "",
-    questionIssues: (raw.questionIssues ?? []).filter((i) => qById.has(i.questionId)),
+    questionIssues,
     recommendations,
     sourceOfOutcomes: input.sourceOfOutcomes,
     nqfLevel: input.nqfLevel,
     generatedAt: new Date().toISOString(),
     model: MODEL,
   };
+}
+
+// ---- Sitting rule --------------------------------------------------------------------------
+
+const ASSIGNMENT_PATTERNS: [RegExp, string][] = [
+  [/\b(conduct|carry out|do|undertake)\b[^.]{0,40}\bresearch\b|\bresearch (on|into|about)\b/i, "do research"],
+  [/\b(upload|attach|submit)\b[^.]{0,60}\b(document|file|report|portfolio|evidence|spreadsheet|presentation|video|photo|photograph|recording)/i, "upload a document or file"],
+  [/\b(portfolio of evidence|PoE)\b/i, "compile a portfolio of evidence"],
+  [/\b(collect|gather|obtain|source|find|request|get|bring)\b[^.]{0,50}\b(from|at|in) your (workplace|organisation|organization|company|place of work|employer)\b/i, "gather workplace information"],
+  [/\b(interview|survey|shadow)\b[^.]{0,40}\b(colleague|manager|supervisor|customer|client|employee|staff|people|learner|worker)/i, "interview or survey other people"],
+  [/\b(use|search|consult|browse|visit|refer to)\b[^.]{0,30}\b(internet|online sources|websites?|web|library|textbooks?|google)\b/i, "use the internet or other sources"],
+  [/\bover (the next|a period of|the coming) (\d+|few|several|two|three|four) (days?|weeks?|months?)\b|\bwithin (\d+|two|three|four) (weeks?|days?) of\b/i, "work over days or weeks"],
+  [/\b(record|film|video) (yourself|a demonstration)\b|\btake (a )?photographs?\b/i, "make a recording or photographs"],
+];
+
+function looksLikeAssignmentTask(q: { type: string; prompt: string }): boolean {
+  if (q.type === "practical_upload") return true;
+  return ASSIGNMENT_PATTERNS.some(([re]) => re.test(q.prompt));
+}
+
+function assignmentVerb(q: { type: string; prompt: string }): string {
+  const hit = ASSIGNMENT_PATTERNS.find(([re]) => re.test(q.prompt));
+  return hit ? hit[1] : "produce and upload a document";
 }

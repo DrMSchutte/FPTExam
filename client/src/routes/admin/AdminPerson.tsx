@@ -165,7 +165,7 @@ export default function AdminPerson() {
                 <div><label className="field-lbl">Email</label><input className="inp" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
                 {isLearner && (
                   <>
-                    <div><label className="field-lbl">Student number</label><input className="inp tabular" value={form.studentNumber} onChange={(e) => setForm({ ...form, studentNumber: e.target.value })} /></div>
+                    <div><label className="field-lbl">Student number <span className="normal-case font-normal text-ink-faint">— optional</span></label><input className="inp tabular" value={form.studentNumber} onChange={(e) => setForm({ ...form, studentNumber: e.target.value })} /></div>
                     <div>
                       <label className="field-lbl">ID number <span className="normal-case font-normal text-ink-faint">{p.idNumberMasked ? `(currently ${p.idNumberMasked}; type a new one to replace)` : "(none on record)"}</span></label>
                       <input className="inp tabular" inputMode="numeric" value={form.idNumber} onChange={(e) => setForm({ ...form, idNumber: e.target.value.replace(/[^\d ]/g, "") })} placeholder="leave blank to keep" />
@@ -190,12 +190,20 @@ export default function AdminPerson() {
                 <div><dt className="field-lbl">Source</dt><dd>{p.source === "fptstaff" ? `FPTStaff (${p.fptstaffId})` : "Added here"}</dd></div>
                 {isLearner && (
                   <>
-                    <div><dt className="field-lbl">Student number</dt><dd className="tabular">{p.studentNumber ?? <span className="text-ink-faint">not recorded</span>}</dd></div>
                     <div>
-                      <dt className="field-lbl">ID number</dt>
+                      <dt className="field-lbl">ID number <span className="normal-case font-normal text-ink-faint">— student identifier</span></dt>
                       <dd className="tabular">
-                        {revealed ? <span>{revealed}</span> : p.idNumberMasked ?? <span className="text-ink-faint">not recorded</span>}
+                        {revealed ? <span>{revealed}</span> : p.idNumberMasked ?? <span className="text-amber-700">not recorded — needed for the Statement of Results</span>}
                         {p.idNumberMasked && !revealed && <button type="button" className="lnk ml-3 text-[12px]" onClick={reveal}>Reveal (audited)</button>}
+                      </dd>
+                    </div>
+                    <div><dt className="field-lbl">Student number</dt><dd className="tabular">{p.studentNumber ?? <span className="text-ink-faint">none</span>}</dd></div>
+                    <div className="col-span-2">
+                      <dt className="field-lbl">Cohorts</dt>
+                      <dd>
+                        {p.cohorts.length === 0
+                          ? <span className="text-ink-faint">not in a cohort yet — <Link to="/admin/cohorts" className="lnk">Cohorts</Link></span>
+                          : p.cohorts.map((c, i) => <span key={c.id}>{i > 0 && ", "}<Link to={`/admin/cohorts/${c.id}`} className="lnk">{c.name}</Link></span>)}
                       </dd>
                     </div>
                   </>

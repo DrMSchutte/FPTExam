@@ -237,6 +237,39 @@ export const assessmentInstruments = pgTable("assessment_instruments", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const cohortStatusEnum = pgEnum("cohort_status", ["active", "closed"]);
+
+// A cohort is the working unit for students (Block 2 of the build plan): e.g.
+// "ND Payroll · Durban · Jan 2026 intake". Students belong to cohorts; a sitting
+// can be created for a cohort so its whole membership is allocated in one
+// action. FPTStaff becomes the owner of cohorts once connected (external_ref).
+export const cohorts = pgTable("cohorts", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  qualificationId: uuid("qualification_id").references(() => qualifications.id),
+  site: text("site"),
+  intake: text("intake"),
+  notes: text("notes"),
+  status: cohortStatusEnum("status").notNull().default("active"),
+  externalRef: text("external_ref"),
+  createdBy: uuid("created_by").notNull().references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const cohortMembers = pgTable(
+  "cohort_members",
+  {
+    cohortId: uuid("cohort_id").notNull().references(() => cohorts.id, { onDelete: "cascade" }),
+    learnerId: uuid("learner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    addedBy: uuid("added_by").references(() => users.id),
+    addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.cohortId, t.learnerId] }),
+  })
+);
+
 export const examSittings = pgTable("exam_sittings", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   qualificationId: uuid("qualification_id")
@@ -245,7 +278,10 @@ export const examSittings = pgTable("exam_sittings", {
   instrumentId: uuid("instrument_id")
     .notNull()
     .references(() => assessmentInstruments.id),
-  cohortId: uuid("cohort_id").notNull(),
+  // Optional: the cohort this sitting was scheduled for (Block 2). Null for a
+  // sitting whose learners were added one by one.
+  cohortId: uuid("cohort_id").references(() => cohorts.id, { onDelete: "set null" }),
+  name: text("name"),
   startTime: timestamp("start_time", { withTimezone: true }).notNull(),
   endTime: timestamp("end_time", { withTimezone: true }).notNull(),
   proctoringProfile: jsonb("proctoring_profile").notNull(),

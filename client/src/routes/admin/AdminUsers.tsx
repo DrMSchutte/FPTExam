@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../lib/api";
-import type { UserRole, EmploymentRelationship, PersonRow, PeopleListResponse, PersonType, UserStatus, ImportPreviewRow } from "@shared/types";
+import type { UserRole, EmploymentRelationship, PersonRow, PeopleListResponse, PersonType, UserStatus, ImportPreviewRow, Cohort } from "@shared/types";
 import { PageHeader, Card, CardHead, Notice, Badge, Empty, PlusIcon } from "../../components/ui";
 import SetupLinkPanel, { type SetupIssue } from "../../components/SetupLinkPanel";
 import type { BadgeTone } from "../../components/ui";
@@ -57,7 +57,10 @@ export default function AdminUsers() {
   const tab = (TABS.find((t) => t.key === params.get("type"))?.key ?? "students") as PersonType;
   const status = (params.get("status") as UserStatus | null) ?? "";
   const page = Math.max(1, Number(params.get("page") ?? 1));
+  const cohortId = params.get("cohort") ?? "";
   const [q, setQ] = useState(params.get("q") ?? "");
+  const [cohortList, setCohortList] = useState<Cohort[]>([]);
+  useEffect(() => { api.get<Cohort[]>("/cohorts").then(setCohortList).catch(() => {}); }, []);
   const debounced = useDebounced(q, 300);
 
   const [data, setData] = useState<PeopleListResponse | null>(null);
@@ -83,6 +86,7 @@ export default function AdminUsers() {
       const qs = new URLSearchParams({ type: tab, page: String(page), pageSize: String(PAGE_SIZE) });
       if (debounced.trim()) qs.set("q", debounced.trim());
       if (status) qs.set("status", status);
+      if (cohortId && tab === "students") qs.set("cohortId", cohortId);
       const [list, sum] = await Promise.all([api.get<PeopleListResponse>(`/people?${qs}`), api.get<Record<string, { total: number; invited: number }>>("/people/summary")]);
       setData(list);
       setSummary(sum);
@@ -91,7 +95,7 @@ export default function AdminUsers() {
     } finally {
       setLoading(false);
     }
-  }, [tab, page, debounced, status]);
+  }, [tab, page, debounced, status, cohortId]);
 
   useEffect(() => {
     load();
@@ -136,6 +140,7 @@ export default function AdminUsers() {
     const qs = new URLSearchParams({ type: tab });
     if (debounced.trim()) qs.set("q", debounced.trim());
     if (status) qs.set("status", status);
+    if (cohortId && tab === "students") qs.set("cohortId", cohortId);
     window.open(`/api/people/export.csv?${qs}`, "_blank");
   }
 
@@ -220,6 +225,12 @@ export default function AdminUsers() {
             <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
           </svg>
         </div>
+        {tab === "students" && cohortList.length > 0 && (
+          <select className="inp !w-auto max-w-[260px]" value={cohortId} onChange={(e) => setParam({ cohort: e.target.value || null, page: null })}>
+            <option value="">All cohorts</option>
+            {cohortList.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.members})</option>)}
+          </select>
+        )}
         <select className="inp !w-auto" value={status} onChange={(e) => setParam({ status: e.target.value || null })}>
           <option value="">All statuses{data ? ` (${Object.values(data.counts).reduce((a, b) => a + (b ?? 0), 0)})` : ""}</option>
           <option value="invited">Invited{data?.counts.invited ? ` (${data.counts.invited})` : ""}</option>
@@ -251,8 +262,9 @@ export default function AdminUsers() {
                 <tr>
                   <th>Name</th>
                   <th>Email</th>
-                  {tab === "students" && <th>Student no.</th>}
                   {tab === "students" && <th>ID number</th>}
+                  {tab === "students" && <th>Cohort</th>}
+                  {tab === "students" && <th>Student no.</th>}
                   {tab === "assessors" && <th>Registration no.</th>}
                   {(tab === "assessors" || tab === "invigilators") && <th>Employment</th>}
                   {tab === "administrators" && <th>Roles</th>}
@@ -269,8 +281,9 @@ export default function AdminUsers() {
                       {u.roles.length > 1 && <p className="t-sub">{u.roles.map((r) => ROLE_OPTIONS.find((o) => o.value === r)?.label ?? r).join(" · ")}</p>}
                     </td>
                     <td className="text-ink-muted">{u.email}</td>
-                    {tab === "students" && <td className="tabular">{u.studentNumber ?? <span className="text-ink-faint">—</span>}</td>}
                     {tab === "students" && <td className="tabular text-ink-muted">{u.idNumberMasked ?? <span className="text-ink-faint">—</span>}</td>}
+                    {tab === "students" && <td>{u.cohorts.length ? u.cohorts.map((c, i) => <Fragment key={c.id}>{i > 0 && ", "}<Link to={`/admin/cohorts/${c.id}`} className="lnk">{c.name}</Link></Fragment>) : <span className="text-ink-faint">—</span>}</td>}
+                    {tab === "students" && <td className="tabular text-ink-muted">{u.studentNumber ?? <span className="text-ink-faint">—</span>}</td>}
                     {tab === "assessors" && <td className="tabular">{u.registrationNumber ?? <span className="text-ink-faint">—</span>}</td>}
                     {(tab === "assessors" || tab === "invigilators") && (
                       <td>{u.employmentRelationship ? <Badge tone={u.employmentRelationship === "external" ? "amber" : "gray"}>{u.employmentRelationship === "external" ? "External" : "Internal"}</Badge> : <span className="text-ink-faint">—</span>}</td>
@@ -328,6 +341,9 @@ function useDebounced<T>(value: T, ms: number): T {
 
 function RegisterForm({ defaultType, onDone, onError }: { defaultType: RegisterType; onDone: (message: string, setup: { name: string; email: string; issue: SetupIssue }) => void; onError: (m: string) => void }) {
   const [type, setType] = useState<RegisterType>(defaultType);
+  const [cohorts, setCohorts] = useState<Cohort[]>([]);
+  const [cohortId, setCohortId] = useState("");
+  useEffect(() => { api.get<Cohort[]>("/cohorts?status=active").then(setCohorts).catch(() => {}); }, []);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [studentNumber, setStudentNumber] = useState("");
@@ -359,6 +375,7 @@ function RegisterForm({ defaultType, onDone, onError }: { defaultType: RegisterT
         studentNumber: studentNumber.trim() || undefined,
         idNumber: idNumber.trim() || undefined,
         registrationNumber: registrationNumber.trim() || undefined,
+        cohortId: type === "student" && cohortId ? cohortId : undefined,
       });
       onDone(created.setup.emailSent ? `${name} registered — set-up link emailed to ${email}.` : `${name} registered.`, { name, email, issue: created.setup });
     } catch (err) {
@@ -394,12 +411,19 @@ function RegisterForm({ defaultType, onDone, onError }: { defaultType: RegisterT
             {type === "student" && (
               <>
                 <div>
-                  <label className="field-lbl">Student number</label>
-                  <input className="inp tabular" value={studentNumber} onChange={(e) => setStudentNumber(e.target.value)} placeholder="e.g. FPT-2026-00123" />
+                  <label className="field-lbl">ID number <span className="normal-case font-normal text-ink-faint">— the student identifier; stored encrypted, shown masked</span></label>
+                  <input className="inp tabular" inputMode="numeric" required pattern="[0-9 ]{13,16}" title="13 digits" value={idNumber} onChange={(e) => setIdNumber(e.target.value.replace(/[^\d ]/g, ""))} placeholder="13 digits" />
                 </div>
                 <div>
-                  <label className="field-lbl">ID number <span className="normal-case font-normal text-ink-faint">(stored encrypted; shown masked)</span></label>
-                  <input className="inp tabular" inputMode="numeric" value={idNumber} onChange={(e) => setIdNumber(e.target.value.replace(/[^\d ]/g, ""))} placeholder="13 digits" />
+                  <label className="field-lbl">Student number <span className="normal-case font-normal text-ink-faint">— optional (Learnership Manager / FPTStaff reference)</span></label>
+                  <input className="inp tabular" value={studentNumber} onChange={(e) => setStudentNumber(e.target.value)} placeholder="if one exists" />
+                </div>
+                <div>
+                  <label className="field-lbl">Cohort <span className="normal-case font-normal text-ink-faint">— optional</span></label>
+                  <select className="inp" value={cohortId} onChange={(e) => setCohortId(e.target.value)}>
+                    <option value="">— none yet —</option>
+                    {cohorts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
                 </div>
               </>
             )}
@@ -448,13 +472,13 @@ function RegisterForm({ defaultType, onDone, onError }: { defaultType: RegisterT
 // Bulk import: file → preview → commit
 // ---------------------------------------------------------------------------------
 
-function ImportPanel({ defaultType, onDone, onError }: { defaultType: PersonType; onDone: (message: string) => void; onError: (m: string) => void }) {
+export function ImportPanel({ defaultType, cohortId, cohortName, onDone, onError }: { defaultType: PersonType; cohortId?: string; cohortName?: string; onDone: (message: string) => void; onError: (m: string) => void }) {
   const [file, setFile] = useState<File | null>(null);
   const [type, setType] = useState<PersonType | "">(defaultType);
   const [preview, setPreview] = useState<{ filename: string; rows: ImportPreviewRow[]; summary: Record<string, number> } | null>(null);
   const [busy, setBusy] = useState(false);
   const [sendLinks, setSendLinks] = useState(true);
-  const [result, setResult] = useState<{ created: number; updated: number; rejected: { line: number; email: string; reasons: string[] }[]; emailed: number; links: { name: string; email: string; setupUrl: string }[] } | null>(null);
+  const [result, setResult] = useState<{ created: number; updated: number; rejected: { line: number; email: string; reasons: string[] }[]; emailed: number; links: { name: string; email: string; setupUrl: string }[]; addedToCohort?: number } | null>(null);
   const [show, setShow] = useState<"all" | "create" | "update" | "skip" | "reject">("all");
 
   async function doPreview() {
@@ -480,11 +504,11 @@ function ImportPanel({ defaultType, onDone, onError }: { defaultType: PersonType
     if (!rows.length) return onError("Nothing to import — every row is a skip or a reject.");
     setBusy(true);
     try {
-      const r = await api.post<typeof result>(`/people/import/commit`, { rows, sendSetupLinks: sendLinks });
+      const r = await api.post<typeof result>(`/people/import/commit`, { rows, sendSetupLinks: sendLinks, cohortId });
       setResult(r);
       setPreview(null);
       setFile(null);
-      onDone(`Imported: ${r!.created} created, ${r!.updated} updated${r!.rejected.length ? `, ${r!.rejected.length} rejected` : ""}${sendLinks ? ` · ${r!.emailed} set-up links emailed` : ""}.`);
+      onDone(`Imported: ${r!.created} created, ${r!.updated} updated${r!.rejected.length ? `, ${r!.rejected.length} rejected` : ""}${cohortName ? ` · ${r!.addedToCohort ?? 0} added to ${cohortName}` : ""}${sendLinks ? ` · ${r!.emailed} set-up links emailed` : ""}.`);
     } catch (err) {
       onError((err as Error).message);
     } finally {
@@ -498,8 +522,8 @@ function ImportPanel({ defaultType, onDone, onError }: { defaultType: PersonType
   return (
     <Card className="mb-5">
       <CardHead
-        title="Import people from a file"
-        subtitle="CSV or Excel. Columns: name, email, type (student / assessor / invigilator / administrator), student_number, id_number, registration_number, employment. Nothing is saved until you confirm the preview."
+        title={cohortName ? `Import students into ${cohortName}` : "Import people from a file"}
+        subtitle={`CSV or Excel. Columns: name, email, id_number (13 digits - the student identifier), type (student / assessor / invigilator / administrator), student_number, registration_number, employment. ${cohortName ? "Every student created or updated from the file is added to this cohort. " : ""}Nothing is saved until you confirm the preview.`}
         right={<a className="lnk text-[13px]" href="/api/people/import/template.csv">Download the template</a>}
       />
       <div className="px-5 pt-4 pb-5 space-y-4">

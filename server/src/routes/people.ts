@@ -15,11 +15,13 @@ import {
   assessorDecisions,
   qualifications,
   accountSetupTokens,
+  cohorts,
+  cohortMembers,
 } from "../db/schema.js";
 import { requireAuth, requireRole, forgetAccountStatus, type AuthedRequest } from "../auth/middleware.js";
 import { hashPassword } from "../auth/password.js";
 import { generateMfaSecret } from "../auth/mfa.js";
-import { encryptField, decryptField, last4 } from "../auth/crypto.js";
+import { encryptField, decryptField, last4, hashIdentifier } from "../auth/crypto.js";
 import { issueSetupLink, appBaseUrl } from "../auth/setupLinks.js";
 import type { UserRole } from "../types.js";
 
@@ -53,7 +55,9 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 
 // ---- Shaping -------------------------------------------------------------------
 
-function personRow(u: typeof users.$inferSelect, roles: UserRole[]) {
+export type CohortRef = { id: string; name: string };
+
+function personRow(u: typeof users.$inferSelect, roles: UserRole[], cohortRefs: CohortRef[] = []) {
   return {
     id: u.id,
     name: u.name,
@@ -68,9 +72,28 @@ function personRow(u: typeof users.$inferSelect, roles: UserRole[]) {
     registrationNumber: u.registrationNumber,
     activatedAt: u.activatedAt?.toISOString() ?? null,
     createdAt: u.createdAt.toISOString(),
+    cohorts: cohortRefs,
   };
 }
 export type PersonRow = ReturnType<typeof personRow>;
+
+// The ID number is the unique student identifier (decision 1, 9 Sep 2026):
+// 13 digits for a South African ID. Stored encrypted; matched by a keyed hash.
+export const ID_NUMBER_RE = /^\d{13}$/;
+export const cleanId = (v: string) => v.replace(/\s/g, "");
+
+export async function cohortsFor(learnerIds: string[]): Promise<Map<string, CohortRef[]>> {
+  const map = new Map<string, CohortRef[]>();
+  if (!learnerIds.length) return map;
+  const rows = await db
+    .select({ learnerId: cohortMembers.learnerId, id: cohorts.id, name: cohorts.name })
+    .from(cohortMembers)
+    .innerJoin(cohorts, eq(cohorts.id, cohortMembers.cohortId))
+    .where(inArray(cohortMembers.learnerId, learnerIds))
+    .orderBy(asc(cohorts.name));
+  for (const r of rows) map.set(r.learnerId, [...(map.get(r.learnerId) ?? []), { id: r.id, name: r.name }]);
+  return map;
+}
 
 async function rolesFor(ids: string[]): Promise<Map<string, UserRole[]>> {
   const map = new Map<string, UserRole[]>();
@@ -83,6 +106,9 @@ async function rolesFor(ids: string[]): Promise<Map<string, UserRole[]>> {
 // Users having any of the given roles.
 const withRole = (roles: UserRole[]) =>
   sql`${users.id} IN (SELECT ${userRoles.userId} FROM ${userRoles} WHERE ${userRoles.role} IN (${sql.join(roles.map((r) => sql`${r}`), sql`, `)}))`;
+
+const inCohort = (cohortId: string) =>
+  sql`${users.id} IN (SELECT ${cohortMembers.learnerId} FROM ${cohortMembers} WHERE ${cohortMembers.cohortId} = ${cohortId})`;
 
 function searchClause(q: string): SQL {
   const term = `%${q.trim()}%`;
@@ -99,6 +125,9 @@ const listQuery = z.object({
   type: typeParam.default("students"),
   q: z.string().trim().max(120).optional(),
   status: statusParam.optional(),
+  cohortId: z.string().uuid().optional(),
+  // "students not in cohort X" - used by the cohort page's add-students search.
+  notInCohortId: z.string().uuid().optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(10).max(200).default(50),
   sort: z.enum(["name", "-name", "created", "-created", "status", "studentNumber"]).default("name"),
@@ -107,9 +136,15 @@ const listQuery = z.object({
 peopleRouter.get("/", requireAuth, requireRole("administrator"), async (req, res) => {
   const parsed = listQuery.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: "Invalid query.", detail: parsed.error.message });
-  const { type, q, status, page, pageSize, sort } = parsed.data;
+  const { type, q, status, cohortId, notInCohortId, page, pageSize, sort } = parsed.data;
 
-  const where = and(withRole(TYPE_ROLES[type]), q ? searchClause(q) : undefined, status ? eq(users.status, status) : undefined);
+  const where = and(
+    withRole(TYPE_ROLES[type]),
+    q ? searchClause(q) : undefined,
+    status ? eq(users.status, status) : undefined,
+    cohortId ? inCohort(cohortId) : undefined,
+    notInCohortId ? sql`NOT ${inCohort(notInCohortId)}` : undefined
+  );
   const order =
     sort === "-name" ? desc(users.name)
     : sort === "created" ? asc(users.createdAt)
@@ -121,13 +156,14 @@ peopleRouter.get("/", requireAuth, requireRole("administrator"), async (req, res
   const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(users).where(where);
   const rows = await db.select().from(users).where(where).orderBy(order, asc(users.id)).limit(pageSize).offset((page - 1) * pageSize);
   const roles = await rolesFor(rows.map((r) => r.id));
+  const cohortRefs = type === "students" ? await cohortsFor(rows.map((r) => r.id)) : new Map<string, CohortRef[]>();
 
   // Status counts for the tab header (same type + search, all statuses).
-  const countsWhere = and(withRole(TYPE_ROLES[type]), q ? searchClause(q) : undefined);
+  const countsWhere = and(withRole(TYPE_ROLES[type]), q ? searchClause(q) : undefined, cohortId ? inCohort(cohortId) : undefined);
   const counts = await db.select({ status: users.status, n: sql<number>`count(*)::int` }).from(users).where(countsWhere).groupBy(users.status);
 
   return res.json({
-    rows: rows.map((u) => personRow(u, roles.get(u.id) ?? [])),
+    rows: rows.map((u) => personRow(u, roles.get(u.id) ?? [], cohortRefs.get(u.id) ?? [])),
     total: count,
     page,
     pageSize,
@@ -158,19 +194,20 @@ peopleRouter.get("/summary", requireAuth, requireRole("administrator"), async (_
 peopleRouter.get("/export.csv", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
   const parsed = listQuery.safeParse({ ...req.query, page: 1, pageSize: 200 });
   if (!parsed.success) return res.status(400).json({ error: "Invalid query." });
-  const { type, q, status } = parsed.data;
-  const where = and(withRole(TYPE_ROLES[type]), q ? searchClause(q) : undefined, status ? eq(users.status, status) : undefined);
+  const { type, q, status, cohortId } = parsed.data;
+  const where = and(withRole(TYPE_ROLES[type]), q ? searchClause(q) : undefined, status ? eq(users.status, status) : undefined, cohortId ? inCohort(cohortId) : undefined);
   const rows = await db.select().from(users).where(where).orderBy(asc(users.name)).limit(50000);
   const roles = await rolesFor(rows.map((r) => r.id));
+  const cohortRefs = type === "students" ? await cohortsFor(rows.map((r) => r.id)) : new Map<string, CohortRef[]>();
   const esc = (v: unknown) => {
     const s = v == null ? "" : String(v);
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
-  const header = ["name", "email", "roles", "status", "student_number", "id_number_last4", "registration_number", "employment", "source", "registered_on"];
+  const header = ["name", "email", "roles", "status", "id_number_last4", "student_number", "cohorts", "registration_number", "employment", "source", "registered_on"];
   const lines = [header.join(",")];
   for (const u of rows) {
     lines.push(
-      [u.name, u.email, (roles.get(u.id) ?? []).join("|"), u.status, u.studentNumber, u.idNumberLast4, u.registrationNumber, u.employmentRelationship, u.source, u.createdAt.toISOString().slice(0, 10)]
+      [u.name, u.email, (roles.get(u.id) ?? []).join("|"), u.status, u.idNumberLast4, u.studentNumber, (cohortRefs.get(u.id) ?? []).map((c) => c.name).join("|"), u.registrationNumber, u.employmentRelationship, u.source, u.createdAt.toISOString().slice(0, 10)]
         .map(esc)
         .join(",")
     );
@@ -258,7 +295,7 @@ peopleRouter.get("/:id", requireAuth, requireRole("administrator"), async (req, 
     .limit(20);
 
   return res.json({
-    ...personRow(u, roles),
+    ...personRow(u, roles, (await cohortsFor([u.id])).get(u.id) ?? []),
     setup: { liveLinkExpiresAt: liveLink?.expiresAt?.toISOString() ?? null, activatedAt: u.activatedAt?.toISOString() ?? null, hasAuthenticator: Boolean(u.mfaSecret) },
     sittings,
     assessing,
@@ -273,7 +310,7 @@ const patchSchema = z.object({
   name: z.string().trim().min(1).optional(),
   email: z.string().trim().email().optional(),
   studentNumber: z.string().trim().max(40).nullable().optional(),
-  idNumber: z.string().trim().min(4).max(32).nullable().optional(), // null clears
+  idNumber: z.string().trim().max(32).nullable().optional(), // null clears
   registrationNumber: z.string().trim().max(60).nullable().optional(),
   employmentRelationship: z.enum(["internal", "external"]).nullable().optional(),
   status: statusParam.optional(),
@@ -297,6 +334,15 @@ peopleRouter.patch("/:id", requireAuth, requireRole("administrator"), async (req
     const [dupe] = await db.select({ id: users.id }).from(users).where(eq(users.studentNumber, p.studentNumber));
     if (dupe) return res.status(409).json({ error: "Another person already has that student number." });
   }
+  if (p.idNumber) {
+    const idn = cleanId(p.idNumber);
+    if (!ID_NUMBER_RE.test(idn)) return res.status(400).json({ error: "The ID number must be 13 digits." });
+    const h = hashIdentifier(idn);
+    if (h !== u.idNumberHash) {
+      const [dupe] = await db.select({ id: users.id, name: users.name }).from(users).where(eq(users.idNumberHash, h));
+      if (dupe) return res.status(409).json({ error: `That ID number is already registered to ${dupe.name}.` });
+    }
+  }
   const set: Partial<typeof users.$inferInsert> = {};
   if (p.name !== undefined) set.name = p.name;
   if (p.email !== undefined) set.email = p.email;
@@ -304,8 +350,10 @@ peopleRouter.patch("/:id", requireAuth, requireRole("administrator"), async (req
   if (p.registrationNumber !== undefined) set.registrationNumber = p.registrationNumber || null;
   if (p.employmentRelationship !== undefined) set.employmentRelationship = p.employmentRelationship;
   if (p.idNumber !== undefined) {
-    set.idNumberEnc = p.idNumber ? encryptField(p.idNumber.replace(/\s/g, "")) : null;
-    set.idNumberLast4 = p.idNumber ? last4(p.idNumber) : null;
+    const idn = p.idNumber ? cleanId(p.idNumber) : "";
+    set.idNumberEnc = idn ? encryptField(idn) : null;
+    set.idNumberLast4 = idn ? last4(idn) : null;
+    set.idNumberHash = idn ? hashIdentifier(idn) : null;
   }
   if (p.status !== undefined) set.status = p.status;
   const [updated] = await db.update(users).set(set).where(eq(users.id, u.id)).returning();
@@ -351,12 +399,12 @@ peopleRouter.post("/chase-setup-links", requireAuth, requireRole("administrator"
 
 // ---- Import -----------------------------------------------------------------------------
 
-const TEMPLATE_COLUMNS = ["name", "email", "type", "student_number", "id_number", "registration_number", "employment"] as const;
+const TEMPLATE_COLUMNS = ["name", "email", "type", "id_number", "student_number", "registration_number", "employment"] as const;
 
 peopleRouter.get("/import/template.csv", requireAuth, requireRole("administrator"), (_req, res) => {
   const lines = [
     TEMPLATE_COLUMNS.join(","),
-    "Thandi Mokoena,thandi@example.com,student,FPT-2026-00123,9001015800089,,",
+    "Thandi Mokoena,thandi@example.com,student,,9001015800089,,",
     "Sipho Dlamini,sipho@example.com,assessor,,,ASR-4471,internal",
     "Naledi Khumalo,naledi@example.com,invigilator,,,,external",
   ];
@@ -422,8 +470,14 @@ function parseSheet(buffer: Buffer, filename: string): ImportRow[] {
 async function previewRows(rows: ImportRow[], defaultType: PersonType | null): Promise<ImportPreviewRow[]> {
   const emails = rows.map((r) => r.email.toLowerCase()).filter(Boolean);
   const studentNumbers = rows.map((r) => r.studentNumber).filter((x): x is string => Boolean(x));
+  const idHashes = rows.map((r) => (r.idNumber && ID_NUMBER_RE.test(r.idNumber) ? hashIdentifier(r.idNumber) : null)).filter((x): x is string => Boolean(x));
   const existingByEmail = new Map<string, typeof users.$inferSelect>();
   const existingByStudentNo = new Map<string, typeof users.$inferSelect>();
+  const existingByIdHash = new Map<string, typeof users.$inferSelect>();
+  if (idHashes.length) {
+    const found = await db.select().from(users).where(inArray(users.idNumberHash, idHashes));
+    for (const u of found) if (u.idNumberHash) existingByIdHash.set(u.idNumberHash, u);
+  }
   if (emails.length) {
     const found = await db.select().from(users).where(sql`lower(${users.email}) IN (${sql.join(emails.map((e) => sql`${e}`), sql`, `)})`);
     for (const u of found) existingByEmail.set(u.email.toLowerCase(), u);
@@ -434,28 +488,36 @@ async function previewRows(rows: ImportRow[], defaultType: PersonType | null): P
   }
   const seenEmail = new Set<string>();
   const seenStudentNo = new Set<string>();
+  const seenId = new Set<string>();
   return rows.map((r) => {
     const reasons: string[] = [];
     const type = r.type ?? defaultType;
     if (!r.name) reasons.push("name missing");
     if (!r.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.email)) reasons.push("email missing or invalid");
     if (!type) reasons.push("type missing (student / assessor / invigilator / administrator)");
-    if (r.idNumber && !/^\d{6,}$/.test(r.idNumber)) reasons.push("ID number should be digits only");
     const emailKey = r.email.toLowerCase();
+    const idHash = r.idNumber && ID_NUMBER_RE.test(r.idNumber) ? hashIdentifier(r.idNumber) : null;
+    const byId = idHash ? existingByIdHash.get(idHash) : undefined;
+    const existing = existingByEmail.get(emailKey) ?? byId;
+    if (r.idNumber && !ID_NUMBER_RE.test(r.idNumber)) reasons.push("ID number must be 13 digits");
+    else if (type === "students" && !r.idNumber && !existing) reasons.push("ID number missing (it is the student identifier)");
     if (emailKey && seenEmail.has(emailKey)) reasons.push("duplicate email within the file");
+    if (idHash && seenId.has(idHash)) reasons.push("duplicate ID number within the file");
     if (r.studentNumber && seenStudentNo.has(r.studentNumber)) reasons.push("duplicate student number within the file");
     seenEmail.add(emailKey);
+    if (idHash) seenId.add(idHash);
     if (r.studentNumber) seenStudentNo.add(r.studentNumber);
     if (reasons.length) return { ...r, type, action: "reject", reasons };
 
-    const existing = existingByEmail.get(emailKey);
     if (existing) {
+      if (byId && byId.id !== existing.id) return { ...r, type, action: "reject", reasons: [`ID number belongs to another person (${byId.name})`], existingId: existing.id };
       const byNo = r.studentNumber ? existingByStudentNo.get(r.studentNumber) : undefined;
       if (byNo && byNo.id !== existing.id) return { ...r, type, action: "reject", reasons: ["student number belongs to another person"], existingId: existing.id };
       const changes: string[] = [];
+      if (existing.email.toLowerCase() !== emailKey) changes.push("email");
       if (r.name && r.name !== existing.name) changes.push("name");
       if (r.studentNumber && r.studentNumber !== existing.studentNumber) changes.push("student number");
-      if (r.idNumber && last4(r.idNumber) !== existing.idNumberLast4) changes.push("ID number");
+      if (idHash && idHash !== existing.idNumberHash) changes.push("ID number");
       if (r.registrationNumber && r.registrationNumber !== existing.registrationNumber) changes.push("registration number");
       if (r.employment && r.employment !== existing.employmentRelationship) changes.push("employment");
       return changes.length
@@ -505,6 +567,8 @@ const commitSchema = z.object({
     .min(1)
     .max(5000),
   sendSetupLinks: z.boolean().default(true),
+  // Block 2: put every created / updated student into this cohort.
+  cohortId: z.string().uuid().optional(),
 });
 
 peopleRouter.post("/import/commit", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
@@ -512,7 +576,13 @@ peopleRouter.post("/import/commit", requireAuth, requireRole("administrator"), a
   if (!parsed.success) return res.status(400).json({ error: "Invalid import rows.", detail: parsed.error.message });
   // Re-validate against the database - the preview may be minutes old.
   const again = await previewRows(parsed.data.rows.map((r) => ({ ...r, type: r.type })), null);
+  let cohort: typeof cohorts.$inferSelect | undefined;
+  if (parsed.data.cohortId) {
+    [cohort] = await db.select().from(cohorts).where(eq(cohorts.id, parsed.data.cohortId));
+    if (!cohort) return res.status(404).json({ error: "Cohort not found." });
+  }
   const created: string[] = [];
+  const studentIds: string[] = [];
   const updated: string[] = [];
   const rejected: { line: number; email: string; reasons: string[] }[] = [];
   let emailed = 0;
@@ -544,11 +614,13 @@ peopleRouter.post("/import/commit", requireAuth, requireRole("administrator"), a
           studentNumber: r.studentNumber,
           idNumberEnc: r.idNumber ? encryptField(r.idNumber) : null,
           idNumberLast4: r.idNumber ? last4(r.idNumber) : null,
+          idNumberHash: r.idNumber ? hashIdentifier(r.idNumber) : null,
           registrationNumber: r.registrationNumber,
           status: "invited",
         })
         .returning();
       await db.insert(userRoles).values(roles.map((role) => ({ userId: u.id, role })));
+      if (r.type === "students") studentIds.push(u.id);
       await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "user_created", targetType: "user", targetId: u.id, reason: "bulk import" });
       created.push(u.id);
       if (parsed.data.sendSetupLinks) {
@@ -557,18 +629,30 @@ peopleRouter.post("/import/commit", requireAuth, requireRole("administrator"), a
         else links.push({ name: u.name, email: u.email, setupUrl: setup.setupUrl });
       }
     } else if (r.existingId) {
-      const set: Partial<typeof users.$inferInsert> = { name: r.name };
+      const set: Partial<typeof users.$inferInsert> = { name: r.name, email: r.email };
       if (r.studentNumber) set.studentNumber = r.studentNumber;
       if (r.idNumber) {
         set.idNumberEnc = encryptField(r.idNumber);
         set.idNumberLast4 = last4(r.idNumber);
+        set.idNumberHash = hashIdentifier(r.idNumber);
       }
+      if (r.type === "students") studentIds.push(r.existingId);
       if (r.registrationNumber) set.registrationNumber = r.registrationNumber;
       if (r.employment) set.employmentRelationship = r.employment;
       await db.update(users).set(set).where(eq(users.id, r.existingId));
       await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "user_edited", targetType: "user", targetId: r.existingId, reason: "bulk import: " + r.reasons.join("; ") });
       updated.push(r.existingId);
     }
+  }
+  let addedToCohort = 0;
+  if (cohort && studentIds.length) {
+    const ins = await db
+      .insert(cohortMembers)
+      .values(studentIds.map((learnerId) => ({ cohortId: cohort!.id, learnerId, addedBy: req.auth!.userId })))
+      .onConflictDoNothing()
+      .returning({ learnerId: cohortMembers.learnerId });
+    addedToCohort = ins.length;
+    await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "cohort_members_added", targetType: "cohort", targetId: cohort.id, reason: `${addedToCohort} from import` });
   }
   await db.insert(auditLog).values({
     actorId: req.auth!.userId,
@@ -577,6 +661,6 @@ peopleRouter.post("/import/commit", requireAuth, requireRole("administrator"), a
     targetId: null,
     reason: `${created.length} created, ${updated.length} updated, ${rejected.length} rejected`,
   });
-  return res.json({ created: created.length, updated: updated.length, rejected, emailed, links });
+  return res.json({ created: created.length, updated: updated.length, rejected, emailed, links, addedToCohort, cohortName: cohort?.name ?? null });
 });
 

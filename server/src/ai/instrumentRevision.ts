@@ -3,6 +3,7 @@ import { createLongMessage, MODEL, type ProgressHook } from "./longCall.js";
 import { randomUUID } from "node:crypto";
 import type { Question, QuestionType, BloomLevel, InstrumentQualityReview } from "../types.js";
 import { bloomGuidanceForNqf } from "./bloom.js";
+import { SITTING_RULE } from "./instrumentGeneration.js";
 
 // "Fix the gaps": takes a drafted paper together with the moderator's (standard
 // check's) findings and revises the paper so that it meets the assessment
@@ -51,7 +52,7 @@ const SUBMIT_TOOL = {
               type: "string",
               description: "If this is an existing question kept unchanged OR lightly edited (same intent, same outcome), its id exactly as given. Omit for a new or replacement question.",
             },
-            type: { type: "string", enum: ["mcq", "short_answer", "long_answer", "practical_upload"] },
+            type: { type: "string", enum: ["mcq", "short_answer", "long_answer"] },
             prompt: { type: "string" },
             maxMark: { type: "number" },
             options: { type: "array", items: { type: "string" }, description: "Only for type = mcq." },
@@ -98,6 +99,7 @@ THE STANDARD THE REVISED PAPER MUST MEET
 3. Every question has a specific, markable model answer or rubric.
 4. The whole paper fits ${input.timeAllocationMinutes} minutes: about ${targetMarks} marks in total, and never more than ${markLimit(input.timeAllocationMinutes)} (one mark per minute is the ceiling for a written paper). This is a hard limit - the time allocation is fixed by the qualification, not by you. To make room for uncovered outcomes, remove or merge low-value recall questions and fold several criteria into one well-built application or case question (say which it primarily evidences in acRef). If something honestly cannot be fitted, leave it out and say so in changeSummary rather than exceeding the limit.
 5. Permitted materials: ${input.permittedMaterials.length ? input.permittedMaterials.join(", ") : "none specified"}.
+6. ${SITTING_RULE} Replace any existing question that breaks this rule with one on the same outcome that can be answered in the sitting.
 
 HOW TO REVISE
 - Keep every question that already works: return it with its keepId, unchanged or lightly edited (adding the Bloom's label, tightening the rubric, fixing the outcome reference).

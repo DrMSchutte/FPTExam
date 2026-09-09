@@ -1,5 +1,9 @@
 import "dotenv/config";
 import express from "express";
+// Express 4 does not catch a rejected promise in an async route; without this
+// one bad query would take the whole server down. With it, the error reaches
+// the JSON error handler below and the server stays up.
+import "express-async-errors";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import path from "node:path";
@@ -8,6 +12,8 @@ import { fileURLToPath } from "node:url";
 import { authRouter } from "./routes/auth.js";
 import { usersRouter } from "./routes/users.js";
 import { peopleRouter } from "./routes/people.js";
+import { cohortsRouter } from "./routes/cohorts.js";
+import { backfillIdNumberHashes } from "./db/backfill.js";
 import { qualificationsRouter } from "./routes/qualifications.js";
 import { instrumentsRouter } from "./routes/instruments.js";
 import { sittingsRouter } from "./routes/sittings.js";
@@ -34,6 +40,7 @@ app.get("/api/health", (_req, res) => res.json({ ok: true }));
 app.use("/api/auth", authRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/people", peopleRouter);
+app.use("/api/cohorts", cohortsRouter);
 app.use("/api/qualifications", qualificationsRouter);
 app.use("/api/instruments", instrumentsRouter);
 app.use("/api/assessments", assessmentsRouter);
@@ -43,6 +50,15 @@ app.use("/api/sittings", sittingsRouter);
 app.use("/api", sessionsRouter);
 // Assessor marking routes (/assessor/queue, /sessions/:id/dossier, ...).
 app.use("/api", assessorRouter);
+
+// Last line of defence: any error a route did not handle becomes a JSON 500
+// for that one request, logged here, and the server keeps serving everyone else.
+app.use((err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const detail = err instanceof Error ? err.message : String(err);
+  console.error(`Unhandled error on ${req.method} ${req.originalUrl}:`, err);
+  if (res.headersSent) return;
+  res.status(500).json({ error: "Something went wrong on the server. The request was not completed.", detail });
+});
 
 // In production, serve the built client so a single Replit run command
 // (npm run build && npm start) is enough - no separate static host needed.
@@ -65,6 +81,8 @@ async function start() {
     if (admin === "created") console.log(`Bootstrap administrator created: ${process.env.ADMIN_EMAIL}`);
     else if (admin === "skipped")
       console.warn("ADMIN_EMAIL / ADMIN_PASSWORD not set - no bootstrap administrator created.");
+    const hashed = await backfillIdNumberHashes();
+    if (hashed) console.log(`ID-number identifiers indexed for ${hashed} existing people.`);
   } catch (err) {
     console.error("Start-up bootstrap failed:", err);
     process.exit(1);

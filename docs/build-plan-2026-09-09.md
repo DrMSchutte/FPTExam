@@ -59,6 +59,25 @@ cohorts when connected.
 *Done when:* a 300-student cohort is allocated to a sitting in one action and appears in
 the invigilator's roster.
 
+**Delivered 9 Sep 2026.** Cohorts page (create with a suggested name such as *NC: Payroll
+· Durban · Jan 2026*, search, active/closed), cohort page (students paged and searchable,
+add by search or "add all matching", import a file straight into the cohort, tick to move
+or remove, export CSV, sittings for the cohort, audit trail). Schedule the Sitting now
+starts with *Who is writing*: choose the cohort and every student in it goes on the roster
+when the sitting is created (300 students in 45 ms in the test), with the 1:30 invigilator
+count shown against the cohort size; each sitting has a roster (paged, searchable, add a
+whole cohort or individual students, take off students who have not started). Register
+People shows each student's cohorts and filters by cohort; the register form and import
+can put a student straight into a cohort. Decision 1 applied: the ID number is required
+for every new student (13 digits, unique — a second registration of the same number is
+refused and points to the existing record; imports match existing students by it), the
+student number is optional. Also in this block: the standard check now blocks any
+question that cannot be answered in a proctored sitting (research, uploads, workplace or
+interview tasks, work over days) and the drafting and Fix-the-gaps engines are told
+never to write one; and the server no longer crashes on an unexpected database error in a
+request (Express 4 needed an explicit guard) — the one request fails with a clear message
+and everyone else carries on.
+
 ### Block 3 — Scheduling at scale
 *What you get:* **Sitting series** — one paper, many rooms/dates — with capacity per
 sitting and automatic split of a cohort across sittings. Month calendar view. Assessor
@@ -112,7 +131,7 @@ and other courses listed and pulled in. The contract is already written
    is no longer required or validated. The person page, import and Statement follow this.
 2. **Moderation stays in FPTStaff.** Block 4 is dropped. The result push in Block 6
    carries what moderation needs (marks, AI/assessor trail, sample scripts on request).
-3. **Email — yes.** Melanie enters `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`,
+3. **Email — yes, set-up deferred (9 Sep 2026 pm).** Melanie enters `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`,
    `MAIL_FROM` in the Repl's Secrets herself; set-up links and later notifications then
    send automatically. Office 365: `smtp.office365.com`, 587, SMTP AUTH enabled on the
    sending mailbox.

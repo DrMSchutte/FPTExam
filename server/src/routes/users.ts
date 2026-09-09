@@ -2,12 +2,12 @@ import { Router } from "express";
 import { z } from "zod";
 import { eq, sql, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { users, userRoles, auditLog } from "../db/schema.js";
+import { users, userRoles, auditLog, cohortMembers } from "../db/schema.js";
 import { hashPassword } from "../auth/password.js";
 import { randomBytes } from "node:crypto";
 import { generateMfaSecret, buildMfaOtpAuthUrl } from "../auth/mfa.js";
 import { issueSetupLink, appBaseUrl } from "../auth/setupLinks.js";
-import { encryptField, last4 } from "../auth/crypto.js";
+import { encryptField, last4, hashIdentifier } from "../auth/crypto.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
 import type { UserRole } from "../types.js";
 
@@ -35,6 +35,8 @@ const createUserSchema = z.object({
   // Learner identity for the Statement of Results; assessor registration number.
   studentNumber: z.string().trim().max(40).optional(),
   idNumber: z.string().trim().regex(/^[0-9 ]{6,20}$/, "ID number should be digits only.").optional(),
+  // Block 2: add a new student straight into a cohort.
+  cohortId: z.string().uuid().optional(),
   registrationNumber: z.string().trim().max(60).optional(),
 });
 
@@ -49,7 +51,20 @@ usersRouter.post(
     if (!parsed.success) {
       return res.status(400).json({ error: "Invalid request body.", detail: parsed.error.message });
     }
-    const { name, email, password, roles, employmentRelationship, source, fptstaffId, studentNumber, idNumber, registrationNumber } = parsed.data;
+    const { name, email, password, roles, employmentRelationship, source, fptstaffId, studentNumber, registrationNumber, cohortId } = parsed.data;
+    const idNumber = parsed.data.idNumber ? parsed.data.idNumber.replace(/\s/g, "") : undefined;
+    // The ID number is the unique student identifier (decision 1, 9 Sep 2026).
+    // Existing test accounts without one are unaffected; every new student needs it.
+    if (roles.includes("learner") && !idNumber && !password) {
+      return res.status(400).json({ error: "A student needs an ID number - it is the student identifier on the Statement of Results." });
+    }
+    if (idNumber && !/^\d{13}$/.test(idNumber)) {
+      return res.status(400).json({ error: "The ID number must be 13 digits." });
+    }
+    if (idNumber) {
+      const [dupe] = await db.select({ id: users.id, name: users.name }).from(users).where(eq(users.idNumberHash, hashIdentifier(idNumber)));
+      if (dupe) return res.status(409).json({ error: `That ID number is already registered to ${dupe.name}.`, detail: "Open their record under Register People rather than registering them twice." });
+    }
 
     const [existing] = await db.select().from(users).where(eq(users.email, email));
     if (existing) {
@@ -87,8 +102,9 @@ usersRouter.post(
         source: source ?? "manual",
         fptstaffId: fptstaffId ?? null,
         studentNumber: studentNumber || null,
-        idNumberEnc: idNumber ? encryptField(idNumber.replace(/\s/g, "")) : null,
+        idNumberEnc: idNumber ? encryptField(idNumber) : null,
         idNumberLast4: idNumber ? last4(idNumber) : null,
+        idNumberHash: idNumber ? hashIdentifier(idNumber) : null,
         registrationNumber: registrationNumber || null,
         // With a password set directly the person can sign in now; otherwise
         // they are invited until they use their set-up link.
@@ -98,6 +114,9 @@ usersRouter.post(
       .returning();
 
     await db.insert(userRoles).values(roles.map((role: UserRole) => ({ userId: created.id, role })));
+    if (cohortId && roles.includes("learner")) {
+      await db.insert(cohortMembers).values({ cohortId, learnerId: created.id, addedBy: req.auth!.userId }).onConflictDoNothing();
+    }
 
     await db.insert(auditLog).values({
       actorId: req.auth!.userId,

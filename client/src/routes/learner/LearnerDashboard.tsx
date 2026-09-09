@@ -193,10 +193,8 @@ export default function LearnerDashboard() {
 
                   {q.type === "practical_upload" && (
                     <div className="space-y-2">
-                      <input type="file" disabled className="text-sm" />
                       <p className="text-xs text-ink-faint">
-                        File upload for practical evidence isn't available in this build yet - use the notes
-                        field below in the meantime.
+                        Nothing can be uploaded during a proctored sitting. Write your full answer in the box below.
                       </p>
                       <textarea
                         value={answers[q.id] ?? ""}

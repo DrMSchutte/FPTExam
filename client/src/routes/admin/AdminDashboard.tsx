@@ -5,6 +5,8 @@ import AdminAssessments from "./AdminAssessments";
 import AdminInstrumentDetail from "./AdminInstrumentDetail";
 import AdminSittings from "./AdminSittings";
 import AdminUsers from "./AdminUsers";
+import AdminCohorts from "./AdminCohorts";
+import AdminCohortDetail from "./AdminCohortDetail";
 import AdminPerson from "./AdminPerson";
 import AdminResults from "./AdminResults";
 
@@ -14,6 +16,7 @@ const NAV_ITEMS = [
   { to: "/admin", end: true, label: "Overview", icon: NAV_ICONS.overview },
   { to: "/admin/assessments", end: false, label: "Set up an Assessment", icon: NAV_ICONS.instr },
   { to: "/admin/people", end: false, label: "Register People", icon: NAV_ICONS.users },
+  { to: "/admin/cohorts", end: false, label: "Cohorts", icon: NAV_ICONS.cohorts },
   { to: "/admin/sittings", end: false, label: "Schedule the Sitting", icon: NAV_ICONS.sittings },
   { to: "/admin/results", end: false, label: "Results", icon: NAV_ICONS.signed },
 ];
@@ -27,6 +30,8 @@ export default function AdminDashboard() {
         <Route path="assessments/:id" element={<AdminInstrumentDetail />} />
         <Route path="people" element={<AdminUsers />} />
         <Route path="people/:id" element={<AdminPerson />} />
+        <Route path="cohorts" element={<AdminCohorts />} />
+        <Route path="cohorts/:id" element={<AdminCohortDetail />} />
         <Route path="sittings" element={<AdminSittings />} />
         <Route path="results" element={<AdminResults />} />
         {/* Old addresses still work. */}

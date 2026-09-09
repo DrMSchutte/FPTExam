@@ -43,7 +43,7 @@ const SUBMIT_TOOL = {
           properties: {
             type: {
               type: "string",
-              enum: ["mcq", "short_answer", "long_answer", "practical_upload"],
+              enum: ["mcq", "short_answer", "long_answer"],
             },
             prompt: { type: "string" },
             maxMark: { type: "number" },
@@ -54,7 +54,7 @@ const SUBMIT_TOOL = {
             },
             modelAnswerOrRubric: {
               type: "string",
-              description: "The model answer (for mcq/short_answer) or rubric criteria (for long_answer/practical_upload). Never shown to the learner.",
+              description: "The model answer (for mcq/short_answer) or rubric criteria (for long_answer). Never shown to the learner.",
             },
             eloRef: {
               type: "string",
@@ -87,6 +87,12 @@ const SUBMIT_TOOL = {
   },
 };
 
+// Every question is answered inside a proctored sitting: closed-book, no
+// internet, no files, no leaving the exam screen, a fixed clock. Anything that
+// needs research, a workplace, other people or an upload is an assignment, not
+// an exam question, and is refused here and caught by the standard check.
+export const SITTING_RULE = `This is a PROCTORED, CLOSED-BOOK EXAMINATION sat in one timed session on a locked screen. Every question must be fully answerable there and then from the learner's own knowledge and the information given in the question. Never set a question that requires research, the internet, textbooks or other sources; workplace observation, interviews or data from the learner's employer; producing, uploading or attaching a document, file, portfolio or artefact; or work over days or weeks. Practical competence is assessed through scenarios, case studies, worked calculations, given data sets and "explain how you would..." tasks the learner writes up in the answer box. A question that breaks this rule is an assignment, not an exam question, and fails the paper.`;
+
 function buildPrompt(input: GenerateInstrumentInput): string {
   const sourceDescription = input.sourceDescription ?? "as published by SAQA";
   const opening =
@@ -97,7 +103,9 @@ The paper must be built directly from the assessment's stated outcomes and asses
       : `You are drafting a QCTO ${input.qctoRegistrationType === "eisa" ? "EISA" : "FISA"} final assessment paper for the qualification "${input.qualificationTitle}".
 
 The paper must be built directly from this qualification's registered Exit Level Outcomes (ELOs) and Associated Assessment Criteria (ACs), ${sourceDescription}.`;
-  return `${opening} Draft a full assessment instrument: a mix of question types (multiple choice, short answer, long answer, practical/portfolio upload) appropriate to what each outcome actually requires a learner to demonstrate - don't force every outcome into the same question type. Every question must be traceable to a specific ELO/AC via its eloRef field. Aim for enough questions to cover every ELO at least once within the given time allocation; it's fine to leave a gap uncovered rather than write a weak or unsupported question - note any gap in coverageNotes instead.
+  return `${opening} Draft a full assessment instrument: a mix of question types (multiple choice, short answer, long answer) appropriate to what each outcome actually requires a learner to demonstrate - don't force every outcome into the same question type.
+
+${SITTING_RULE} Every question must be traceable to a specific ELO/AC via its eloRef field. Aim for enough questions to cover every ELO at least once within the given time allocation; it's fine to leave a gap uncovered rather than write a weak or unsupported question - note any gap in coverageNotes instead.
 
 Cognitive demand: ${bloomGuidanceForNqf(input.nqfLevel ?? null)} Label every question with the Bloom's level it genuinely demands (a recall question is "remember" even if the topic is advanced), and do not let recall-only questions dominate a paper at this level. Cover every Assessment Criterion, not only every Exit Level Outcome; where one question can honestly evidence several criteria, say which one it primarily evidences in acRef.
 

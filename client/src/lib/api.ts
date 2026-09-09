@@ -61,6 +61,8 @@ export const api = {
     request<T>(path, { method: "PATCH", body: data ? JSON.stringify(data) : undefined }),
   put: <T,>(path: string, data?: unknown) =>
     request<T>(path, { method: "PUT", body: data ? JSON.stringify(data) : undefined }),
+  del: <T,>(path: string, data?: unknown) =>
+    request<T>(path, { method: "DELETE", body: data ? JSON.stringify(data) : undefined }),
   // For multipart/form-data uploads (e.g. the QCTO-document instrument
   // intake). Deliberately bypasses `request()`'s JSON Content-Type header -
   // the browser needs to set its own multipart boundary, which it can only

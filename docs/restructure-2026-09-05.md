@@ -16,7 +16,7 @@ in FPTStaff off the result FPT Exam pushes.
 ## 2. Administrator structure — three steps
 
 The admin sidebar becomes: **Overview · Set up an Assessment · Register People ·
-Schedule the Sitting · Results**. "Qualifications" and "Instruments" as separate pages are
+Cohorts (added 9 Sep 2026) · Schedule the Sitting · Results**. "Qualifications" and "Instruments" as separate pages are
 gone; the qualification is captured as part of setting up the assessment.
 
 ### Set up an Assessment — four routes (rule agreed 9 Sep 2026)
@@ -104,8 +104,35 @@ email. "Send set-up link" on a person's row re-issues it — and, for supervisor
 new authenticator secret (lost-phone recovery). (Learner one-time sitting codes for the
 exam itself: Phase D, with the pre-check/consent flow.)
 
+### Cohorts (Block 2, delivered 9 Sep 2026)
+A cohort is the working unit for students — a group such as *ND Payroll · Durban · Jan
+2026 intake*. Students are added by search, by "add all matching", or by importing a file
+straight into the cohort; they can be moved between cohorts and removed; the cohort page
+shows its students, its sittings and an audit trail. FPTStaff owns cohorts once connected
+(`external_ref`).
+
 ### Schedule the Sitting
-Unchanged: paper + window + assessor + invigilators + learners. Picker filtered by the gate.
+Starts with *who is writing*: pick the cohort and its whole membership is on the roster
+the moment the sitting is created; the invigilator count is shown against the 1:30 ratio.
+Then paper (picker filtered by the gate, the cohort's qualification first), window,
+assessor, invigilators. Every sitting has a roster — paged, searchable, add another cohort
+or individual students, take off anyone who has not started. The roster is what the
+Invigilator console (Block 5) shows live.
+
+### The ID number is the student identifier (decision 9 Sep 2026)
+Every new student is registered with their 13-digit ID number; it is unique on FPT Exam
+(a second registration of the same number is refused and points to the existing record),
+stored encrypted, masked on screen, revealed only with an audit entry, and printed in full
+only on the Statement of Results. The student number is an optional reference to
+Learnership Manager / FPTStaff.
+
+### Every question is answerable in the sitting (rule added 9 Sep 2026)
+A proctored, closed-book, locked-screen sitting cannot accommodate research, internet or
+textbook use, workplace tasks, interviews, or uploading a document — those are assignment
+tasks, not exam questions. The drafting and Fix-the-gaps engines are instructed never to
+write one, and the standard check blocks a paper that contains one (deterministically, by
+question type and wording, as well as by the moderator's reading) until it is replaced by
+a scenario, case-study or worked task answered in writing during the sitting.
 
 ### Results (new)
 Administrator's read-only view of signed-off results and their FPTStaff push status.

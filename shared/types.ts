@@ -80,6 +80,78 @@ export interface PersonRow {
   registrationNumber: string | null;
   activatedAt: string | null;
   createdAt: string;
+  cohorts: CohortRef[];
+}
+
+export interface CohortRef {
+  id: string;
+  name: string;
+}
+
+export type CohortStatus = "active" | "closed";
+
+export interface Cohort {
+  id: string;
+  name: string;
+  qualificationId: string | null;
+  qualificationTitle: string | null;
+  site: string | null;
+  intake: string | null;
+  notes: string | null;
+  status: CohortStatus;
+  externalRef: string | null;
+  members: number;
+  sittings: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CohortDetail extends Cohort {
+  memberStatus: Partial<Record<UserStatus, number>>;
+  sittingList: {
+    id: string;
+    name: string | null;
+    startTime: string;
+    endTime: string;
+    instrumentId: string;
+    paper: string;
+    assessorName: string;
+    learners: number;
+    submitted: number;
+  }[];
+  audit: { action: string; reason: string | null; at: string }[];
+}
+
+export interface CohortMemberRow {
+  id: string;
+  name: string;
+  email: string;
+  status: UserStatus;
+  studentNumber: string | null;
+  idNumberMasked: string | null;
+  addedAt: string;
+}
+
+export interface SittingRosterRow {
+  sessionId: string;
+  learnerId: string;
+  name: string;
+  email: string;
+  studentNumber: string | null;
+  idNumberMasked: string | null;
+  accountStatus: UserStatus;
+  sessionStatus: string;
+  checkInTime: string | null;
+  submissionTime: string | null;
+}
+
+export interface CohortAllocation {
+  cohortId: string;
+  cohortName: string;
+  members: number;
+  assigned: number;
+  alreadyAssigned: number;
+  skipped: number;
 }
 
 export interface PeopleListResponse {
@@ -208,7 +280,8 @@ export interface ExamSitting {
   id: string;
   qualificationId: string;
   instrumentId: string;
-  cohortId: string;
+  cohortId: string | null;
+  name: string | null;
   startTime: string;
   endTime: string;
   proctoringProfile: ProctoringProfile;
@@ -216,6 +289,14 @@ export interface ExamSitting {
   independentInvigilationRequired: boolean;
   createdBy: string;
   createdAt: string;
+}
+
+// GET /sittings rows carry display fields alongside the record.
+export interface SittingListRow extends ExamSitting {
+  qualificationTitle: string;
+  cohortName: string | null;
+  assessorName: string;
+  learners: number;
 }
 
 export interface LearnerSittingSummary {

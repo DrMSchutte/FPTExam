@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
-import { eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import {
   examSittings,
@@ -10,6 +9,10 @@ import {
   users,
   userRoles,
   assessmentInstruments,
+  cohorts,
+  cohortMembers,
+  qualifications,
+  auditLog,
 } from "../db/schema.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
 
@@ -25,12 +28,11 @@ const proctoringProfileSchema = z.object({
 const createSchema = z.object({
   qualificationId: z.string().uuid(),
   instrumentId: z.string().uuid(),
-  // One sitting = one cohort for now, so there's no separate cohorts table
-  // to manage yet - the cohort_id column exists for when multiple sittings
-  // need to be grouped and released together (Section 5.1 of the build
-  // brief). Passing a cohortId reuses an existing group; omitting one mints
-  // a fresh cohort for just this sitting.
+  // Block 2: schedule the sitting for a cohort - its whole membership is
+  // allocated in the same action (allocateCohort, default true).
   cohortId: z.string().uuid().optional(),
+  allocateCohort: z.boolean().default(true),
+  name: z.string().trim().max(120).optional(),
   startTime: z.string().datetime(),
   endTime: z.string().datetime(),
   proctoringProfile: proctoringProfileSchema.optional(),
@@ -64,6 +66,8 @@ sittingsRouter.post(
       qualificationId,
       instrumentId,
       cohortId,
+      allocateCohort,
+      name,
       startTime,
       endTime,
       proctoringProfile,
@@ -71,6 +75,13 @@ sittingsRouter.post(
       invigilatorIds,
       independentInvigilationRequired,
     } = parsed.data;
+
+    let cohort: typeof cohorts.$inferSelect | undefined;
+    if (cohortId) {
+      [cohort] = await db.select().from(cohorts).where(eq(cohorts.id, cohortId));
+      if (!cohort) return res.status(404).json({ error: "Cohort not found." });
+      if (cohort.status === "closed") return res.status(409).json({ error: `${cohort.name} is closed. Reopen it to schedule a sitting for it.` });
+    }
 
     if (new Date(endTime) <= new Date(startTime)) {
       return res.status(400).json({ error: "endTime must be after startTime." });
@@ -127,7 +138,8 @@ sittingsRouter.post(
       .values({
         qualificationId,
         instrumentId,
-        cohortId: cohortId ?? randomUUID(),
+        cohortId: cohort?.id ?? null,
+        name: name || null,
         startTime: new Date(startTime),
         endTime: new Date(endTime),
         proctoringProfile: proctoringProfileSchema.parse(proctoringProfile ?? {}),
@@ -143,17 +155,147 @@ sittingsRouter.post(
         .values(invigilatorIds.map((invigilatorId) => ({ sittingId: created.id, invigilatorId })));
     }
 
-    return res.status(201).json(created);
+    let allocation: Awaited<ReturnType<typeof allocateCohortToSitting>> | null = null;
+    if (cohort && allocateCohort) {
+      allocation = await allocateCohortToSitting(created.id, cohort, req.auth!.userId);
+    }
+    await db.insert(auditLog).values({
+      actorId: req.auth!.userId,
+      action: "sitting_created",
+      targetType: "sitting",
+      targetId: created.id,
+      reason: cohort ? `for cohort ${cohort.name}${allocation ? ` (${allocation.assigned} learners allocated)` : ""}` : "learners added individually",
+    });
+
+    return res.status(201).json({ ...created, allocation });
   }
 );
+
+// Every eligible member of the cohort gets a scheduled LearnerSession on the
+// sitting. Suspended and archived students are left out and reported.
+async function allocateCohortToSitting(sittingId: string, cohort: typeof cohorts.$inferSelect, actorId: string) {
+  const members = await db
+    .select({ id: users.id, status: users.status })
+    .from(cohortMembers)
+    .innerJoin(users, eq(users.id, cohortMembers.learnerId))
+    .where(eq(cohortMembers.cohortId, cohort.id));
+  const eligible = members.filter((m) => m.status === "active" || m.status === "invited").map((m) => m.id);
+  const skipped = members.length - eligible.length;
+  const existing = await db.select({ learnerId: learnerSessions.learnerId }).from(learnerSessions).where(eq(learnerSessions.sittingId, sittingId));
+  const already = new Set(existing.map((e) => e.learnerId));
+  const toInsert = eligible.filter((id) => !already.has(id));
+  const alreadyFromCohort = eligible.length - toInsert.length;
+  for (let i = 0; i < toInsert.length; i += 500) {
+    await db.insert(learnerSessions).values(toInsert.slice(i, i + 500).map((learnerId) => ({ sittingId, learnerId, status: "scheduled" as const })));
+  }
+  await db.insert(auditLog).values({ actorId, action: "sitting_cohort_allocated", targetType: "sitting", targetId: sittingId, reason: `${cohort.name}: ${toInsert.length} allocated, ${alreadyFromCohort} already on the sitting, ${skipped} suspended/archived skipped` });
+  return { cohortId: cohort.id, cohortName: cohort.name, members: members.length, assigned: toInsert.length, alreadyAssigned: alreadyFromCohort, skipped };
+}
+
+sittingsRouter.post("/:id/assign-cohort", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
+  const parsed = z.object({ cohortId: z.string().uuid() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid request body.", detail: parsed.error.message });
+  const [sitting] = await db.select().from(examSittings).where(eq(examSittings.id, req.params.id));
+  if (!sitting) return res.status(404).json({ error: "Sitting not found." });
+  const [cohort] = await db.select().from(cohorts).where(eq(cohorts.id, parsed.data.cohortId));
+  if (!cohort) return res.status(404).json({ error: "Cohort not found." });
+  const result = await allocateCohortToSitting(sitting.id, cohort, req.auth!.userId);
+  if (!sitting.cohortId) await db.update(examSittings).set({ cohortId: cohort.id }).where(eq(examSittings.id, sitting.id));
+  return res.status(201).json(result);
+});
+
+// The roster: who is on this sitting and where each of them is. Used by the
+// Administrator now and by the Invigilator console (Block 5).
+sittingsRouter.get("/:id/learners", requireAuth, requireRole("administrator", "invigilator", "assessor"), async (req: AuthedRequest, res) => {
+  const [sitting] = await db.select().from(examSittings).where(eq(examSittings.id, req.params.id));
+  if (!sitting) return res.status(404).json({ error: "Sitting not found." });
+  const roles = req.auth!.roles;
+  if (!roles.includes("administrator")) {
+    const isAssessor = sitting.assignedAssessorId === req.auth!.userId;
+    const [inv] = await db.select().from(sittingInvigilators).where(and(eq(sittingInvigilators.sittingId, sitting.id), eq(sittingInvigilators.invigilatorId, req.auth!.userId)));
+    if (!isAssessor && !inv) return res.status(403).json({ error: "You are not assigned to this sitting." });
+  }
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.min(500, Math.max(10, Number(req.query.pageSize) || 100));
+  const where = and(
+    eq(learnerSessions.sittingId, sitting.id),
+    q ? sql`(${users.name} ILIKE ${"%" + q + "%"} OR ${users.email} ILIKE ${"%" + q + "%"} OR ${users.studentNumber} ILIKE ${"%" + q + "%"})` : undefined
+  );
+  const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(learnerSessions).innerJoin(users, eq(users.id, learnerSessions.learnerId)).where(where);
+  const rows = await db
+    .select({
+      sessionId: learnerSessions.id,
+      learnerId: users.id,
+      name: users.name,
+      email: users.email,
+      studentNumber: users.studentNumber,
+      idNumberLast4: users.idNumberLast4,
+      accountStatus: users.status,
+      sessionStatus: learnerSessions.status,
+      checkInTime: learnerSessions.checkInTime,
+      submissionTime: learnerSessions.submissionTime,
+    })
+    .from(learnerSessions)
+    .innerJoin(users, eq(users.id, learnerSessions.learnerId))
+    .where(where)
+    .orderBy(asc(users.name))
+    .limit(pageSize)
+    .offset((page - 1) * pageSize);
+  const byStatus = await db
+    .select({ status: learnerSessions.status, n: sql<number>`count(*)::int` })
+    .from(learnerSessions)
+    .where(eq(learnerSessions.sittingId, sitting.id))
+    .groupBy(learnerSessions.status);
+  return res.json({
+    rows: rows.map((r) => ({
+      ...r,
+      idNumberMasked: r.idNumberLast4 ? `••••••••• ${r.idNumberLast4}` : null,
+      idNumberLast4: undefined,
+      checkInTime: r.checkInTime?.toISOString() ?? null,
+      submissionTime: r.submissionTime?.toISOString() ?? null,
+    })),
+    total: count,
+    page,
+    pageSize,
+    byStatus: Object.fromEntries(byStatus.map((b) => [b.status, b.n])),
+  });
+});
+
+sittingsRouter.delete("/:id/learners", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
+  const parsed = z.object({ learnerIds: z.array(z.string().uuid()).min(1).max(5000) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid request body.", detail: parsed.error.message });
+  const [sitting] = await db.select().from(examSittings).where(eq(examSittings.id, req.params.id));
+  if (!sitting) return res.status(404).json({ error: "Sitting not found." });
+  // Only learners who have not started can be taken off a sitting.
+  const del = await db
+    .delete(learnerSessions)
+    .where(and(eq(learnerSessions.sittingId, sitting.id), inArray(learnerSessions.learnerId, parsed.data.learnerIds), eq(learnerSessions.status, "scheduled")))
+    .returning({ learnerId: learnerSessions.learnerId });
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "sitting_learners_removed", targetType: "sitting", targetId: sitting.id, reason: `${del.length} removed` });
+  return res.json({ removed: del.length, notRemoved: parsed.data.learnerIds.length - del.length });
+});
 
 sittingsRouter.get(
   "/",
   requireAuth,
   requireRole("administrator", "assessor"),
   async (_req, res) => {
-    const rows = await db.select().from(examSittings);
-    return res.json(rows);
+    const rows = await db
+      .select({
+        sitting: examSittings,
+        qualificationTitle: qualifications.title,
+        cohortName: cohorts.name,
+        assessorName: users.name,
+        learners: sql<number>`(SELECT count(*)::int FROM ${learnerSessions} ls WHERE ls.sitting_id = ${examSittings.id})`,
+      })
+      .from(examSittings)
+      .innerJoin(qualifications, eq(qualifications.id, examSittings.qualificationId))
+      .innerJoin(users, eq(users.id, examSittings.assignedAssessorId))
+      .leftJoin(cohorts, eq(cohorts.id, examSittings.cohortId))
+      .orderBy(desc(examSittings.startTime))
+      .limit(2000);
+    return res.json(rows.map((r) => ({ ...r.sitting, qualificationTitle: r.qualificationTitle, cohortName: r.cohortName, assessorName: r.assessorName, learners: r.learners })));
   }
 );
 
