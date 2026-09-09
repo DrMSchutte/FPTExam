@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import path from "node:path";
+import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { authRouter } from "./routes/auth.js";
 import { usersRouter } from "./routes/users.js";
@@ -67,10 +68,39 @@ async function start() {
     process.exit(1);
   }
 
-  app.listen(port, () => {
-    console.log(`FPT Exam API listening on port ${port}`);
+  listenTakingOver(port);
+}
+
+// A new build must be able to take over from whatever is on the port - an
+// earlier instance the workflow lost track of, or one started from the Shell.
+// On EADDRINUSE, stop the holder and try again, so pressing Run always wins.
+function listenTakingOver(p: number, attempt = 0) {
+  const server = app.listen(p, () => {
+    console.log(`FPT Exam API listening on port ${p}`);
     startJobRunner();
   });
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE" && attempt < 5) {
+      console.warn(`Port ${p} is held by an earlier instance - stopping it and taking over (attempt ${attempt + 1}).`);
+      freePort(p);
+      setTimeout(() => listenTakingOver(p, attempt + 1), 1500);
+    } else {
+      console.error("Could not start the server:", err);
+      process.exit(1);
+    }
+  });
+}
+
+function freePort(p: number) {
+  // Whichever tool the image has; each one kills only the process on that port.
+  for (const cmd of [`fuser -k ${p}/tcp`, `lsof -ti tcp:${p} | xargs -r kill`, `ss -ltnp 'sport = :${p}' | grep -o 'pid=[0-9]*' | cut -d= -f2 | xargs -r kill`]) {
+    try {
+      execSync(cmd, { stdio: "ignore" });
+      return;
+    } catch {
+      /* try the next */
+    }
+  }
 }
 
 start();

@@ -99,4 +99,4 @@ Response-Review engine) is next, then Phase D (proctoring & invigilation).
 
 ## Updating a running Repl
 
-Every update is: **Git pane → Pull → Run**. The Run command (`npm run build && npm start`) installs any new dependencies first (`prebuild`), rebuilds, applies pending database migrations on start, and serves. No Shell steps.
+Every update is: **Git pane → Pull → Run (▶)**. The Run command (`npm run build && npm start`) installs any new dependencies first (`prebuild`), rebuilds, applies pending database migrations on start, and serves. If an earlier instance is still holding the port (one started from the Shell, or one the workflow lost track of), the new server stops it and takes over by itself. No Shell steps.
