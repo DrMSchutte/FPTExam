@@ -14,7 +14,7 @@ of work from here. It follows `restructure-2026-09-05.md` (the rules) and replac
    demand against the NQF band, rubric quality, time. Blocked papers are fixed (AI or by
    hand), or overridden with an audited reason.
 4. **AI assesses, assessor endorses.** The assessor's sign-off is the only release event.
-   Moderation and verification run in FPTStaff unless decided otherwise (open decision 2).
+   Moderation and verification run in FPTStaff (decided 9 Sep 2026).
 5. **Data minimisation.** FPT Exam holds what an exam needs. Learner ID number and student
    number are stored encrypted, masked on screen, printed in full only on the Statement of
    Results. Proctoring evidence is kept 12 months then deleted (hold flag for appeals).
@@ -69,7 +69,7 @@ ratio you set (e.g. 1:30) and the independence rule. Clash check for double-book
 *Done when:* a series of 6 sittings for 900 learners is created and staffed in under ten
 minutes with no manual counting.
 
-### Block 4 — Moderator role (if moderation comes to FPT Exam — open decision 2)
+### Block 4 — Moderator role — DROPPED 9 Sep 2026 (moderation stays in FPTStaff)
 *What you get:* Moderator as a fifth role with its own queue: sampling of signed-off
 scripts by rule (e.g. 10% or at least 5, all borderline, all fails), moderation record
 per script (confirmed / adjusted / referred), and moderation status on Results. If
@@ -90,6 +90,8 @@ sitting details, integrity summary, assessor sign-off — and the result-release
 Assessor email notifications (scripts waiting).
 *Done when:* a full sitting runs end to end with a proctored learner, an invigilator
 watching, an assessor signing off and the learner downloading their Statement.
+Added 9 Sep 2026: continuous live view of every learner for the invigilator; full-screen
+exam with tab/window switching detected, the paper locked and the invigilator alerted.
 
 ### Block 6 — Phase E: FPTStaff connection
 *What you get:* People and cohorts pulled from FPTStaff by section; manual adds pushed
@@ -101,17 +103,33 @@ verification / certification stay in FPTStaff. Contract written for the FPTStaff
 and other courses listed and pulled in. The contract is already written
 (`curricula-builder-contract.md`); Curricula Builder has to expose it.
 
-## Open decisions (yours)
+## Decisions taken 9 Sep 2026 (were the open decisions)
 
-1. **Student number format** — e.g. `FPT-2026-00123`. Needed for Block 1 validation.
-2. **Moderators** — inside FPT Exam (Block 4 built) or in FPTStaff (Block 4 skipped)?
-3. **Email** — set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` in the
-   Repl's Secrets so set-up links and, later, notifications send automatically.
-4. **Curricula Builder side** — who implements the export contract (Jacques?) and when.
-5. **QCTO / AQP proctoring documents** — attach FPT's copies if you want Block 5 mapped
-   against them rather than the public policy alone.
-6. **Invigilator ratio and assessor marking cap** — defaults 1:30 and 60 scripts in
-   flight unless you say otherwise.
+1. **Student identifier — the ID number.** The learner's South African ID number is the
+   unique student identifier on FPT Exam and on the Statement of Results (stored
+   encrypted, masked on screen, full only on the Statement). A separate student number
+   is optional — a reference to Learnership Manager / FPTStaff where one exists — and
+   is no longer required or validated. The person page, import and Statement follow this.
+2. **Moderation stays in FPTStaff.** Block 4 is dropped. The result push in Block 6
+   carries what moderation needs (marks, AI/assessor trail, sample scripts on request).
+3. **Email — yes.** Melanie enters `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`,
+   `MAIL_FROM` in the Repl's Secrets herself; set-up links and later notifications then
+   send automatically. Office 365: `smtp.office365.com`, 587, SMTP AUTH enabled on the
+   sending mailbox.
+4. **Curricula Builder builds the export** to `curricula-builder-contract.md`. FPT Exam
+   side needs `CURRICULA_BUILDER_BASE_URL` and `CURRICULA_BUILDER_API_KEY` once it exists.
+5. **Proctoring requirement accepted as written in Block 5**, with two additions:
+   the **invigilator may watch every learner live for the whole sitting** (continuous
+   camera/screen view in the Invigilator console, not only periodic captures and flags);
+   and **no tab-switching while writing** — the exam runs full-screen, leaving the exam
+   tab or window is detected, the paper locks with a notice to the learner, the
+   invigilator is alerted, and the event goes in the incident log. (Browser limit, stated
+   plainly: a web page can detect and lock on every switch and can require full screen,
+   but cannot physically stop the operating system from switching; a lockdown browser app
+   would be the only way to do that, and it is out of scope unless asked for.)
+6. **Invigilator ratio 1:30** confirmed; assessor cap of 60 scripts in flight stands.
+7. **`DATA_ENCRYPTION_KEY`** — Melanie generates a random 64-character string and adds it
+   as a Secret before real ID numbers go in.
 
 ## How each block is delivered
 
