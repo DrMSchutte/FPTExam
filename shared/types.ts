@@ -145,6 +145,78 @@ export interface SittingRosterRow {
   submissionTime: string | null;
 }
 
+export interface StaffingProblem { code: string; message: string; blocking: boolean; slot?: number }
+
+export interface StaffingInfo {
+  ratio: number;
+  assessors: { id: string; name: string; inFlight: number; waiting: number; cap: number; scope: string[] | null; inScope: boolean | null }[];
+  invigilators: { id: string; name: string; employment: EmploymentRelationship | null; busy: { name: string | null; startTime: string }[] }[];
+}
+
+export interface SeriesSlotInput {
+  startTime: string;
+  endTime: string;
+  venue?: string;
+  capacity?: number;
+  invigilatorIds: string[];
+  assessorId?: string;
+}
+
+export interface SeriesPlanRow {
+  slot: number;
+  startTime: string;
+  endTime: string;
+  venue: string | null;
+  capacity: number | null;
+  learners: number;
+  invigilators: number;
+  invigilatorsNeeded: number;
+  assessorId: string;
+}
+
+export interface SeriesResponse {
+  dryRun?: boolean;
+  seriesId?: string;
+  sittings?: { id: string; name: string; startTime: string; venue: string | null; learners: number }[];
+  plan: SeriesPlanRow[];
+  problems: StaffingProblem[];
+  totalLearners: number;
+  placed?: number;
+  unplaced?: number;
+  needsAcceptance?: boolean;
+  error?: string;
+}
+
+export interface CalendarSitting {
+  id: string;
+  name: string | null;
+  venue: string | null;
+  capacity: number | null;
+  startTime: string;
+  endTime: string;
+  seriesId: string | null;
+  qualificationTitle: string;
+  cohortName: string | null;
+  assessorName: string;
+  learners: number;
+  invigilators: number;
+  invigilatorsNeeded: number;
+}
+
+export interface WorkloadRow {
+  id: string;
+  name: string;
+  status: UserStatus;
+  cap: number;
+  inFlight: number;
+  waiting: number;
+  overdue: number;
+  signedOff30d: number;
+  avgTurnaroundHours: number | null;
+  upcomingSittings: number;
+  scope: string[];
+}
+
 export interface CohortAllocation {
   cohortId: string;
   cohortName: string;
@@ -163,6 +235,8 @@ export interface PeopleListResponse {
 }
 
 export interface PersonDetail extends PersonRow {
+  markingCap: number | null;
+  scope: { id: string; title: string }[];
   setup: { liveLinkExpiresAt: string | null; activatedAt: string | null; hasAuthenticator: boolean };
   sittings: { sessionId: string; sittingId: string; startTime: string; endTime: string; qualificationTitle: string; sessionStatus: string; outcome: "competent" | "not_yet_competent" | null; totalMark: number | null; totalMax: number | null; signedOffAt: string | null }[];
   assessing: { sittingId: string; startTime: string; qualificationTitle: string; scripts: number; signedOff: number }[];
@@ -282,6 +356,9 @@ export interface ExamSitting {
   instrumentId: string;
   cohortId: string | null;
   name: string | null;
+  seriesId: string | null;
+  venue: string | null;
+  capacity: number | null;
   startTime: string;
   endTime: string;
   proctoringProfile: ProctoringProfile;

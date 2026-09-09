@@ -1,9 +1,14 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../lib/api";
-import type { Qualification, AssessmentInstrument, SittingListRow, PublicUser, Cohort, CohortAllocation, SittingRosterRow, PeopleListResponse } from "@shared/types";
+import type { Qualification, AssessmentInstrument, SittingListRow, Cohort, CohortAllocation, SittingRosterRow, PeopleListResponse, StaffingInfo, StaffingProblem } from "@shared/types";
 import { PageHeader, Card, CardHead, Notice, Empty, PlusIcon, Badge, typeWord } from "../../components/ui";
 import { StatusBadge } from "./AdminUsers";
+import SeriesPlanner from "./SeriesPlanner";
+import SittingsCalendar from "./SittingsCalendar";
+import MarkingWorkload from "./MarkingWorkload";
+
+type View = "list" | "calendar" | "workload";
 
 const fmt = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -13,31 +18,31 @@ export default function AdminSittings() {
   const [qualifications, setQualifications] = useState<Qualification[]>([]);
   const [instruments, setInstruments] = useState<AssessmentInstrument[]>([]);
   const [sittings, setSittings] = useState<SittingListRow[]>([]);
-  const [staff, setStaff] = useState<PublicUser[]>([]);
+  const [staffing, setStaffing] = useState<StaffingInfo | null>(null);
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [showCreate, setShowCreate] = useState(Boolean(params.get("cohort")));
+  const [showCreate, setShowCreate] = useState<"none" | "single" | "series">(params.get("cohort") ? "single" : "none");
   const [openId, setOpenId] = useState<string | null>(params.get("open"));
+  const [view, setView] = useState<View>((params.get("view") as View) || "list");
+  const [pendingWarnings, setPendingWarnings] = useState<StaffingProblem[] | null>(null);
 
   async function loadAll() {
-    const [q, i, s, u, c] = await Promise.all([
+    const [q, i, s, c] = await Promise.all([
       api.get<Qualification[]>("/qualifications"),
       api.get<AssessmentInstrument[]>("/instruments"),
       api.get<SittingListRow[]>("/sittings"),
-      api.get<PublicUser[]>("/users?supervisory=1"),
       api.get<Cohort[]>("/cohorts?status=active"),
     ]);
     setQualifications(q);
     setInstruments(i);
     setSittings(s);
-    setStaff(u);
     setCohorts(c);
   }
   useEffect(() => { loadAll().catch((e) => setError((e as Error).message)); }, []);
 
-  const assessors = staff.filter((u) => u.roles.includes("assessor"));
-  const invigilators = staff.filter((u) => u.roles.includes("invigilator"));
+  const assessors = staffing?.assessors ?? [];
+  const invigilators = staffing?.invigilators ?? [];
   const qualTitle = (id: string) => qualifications.find((q) => q.id === id)?.title ?? "—";
   // The standard check is the gate: only ready/override papers may be sat.
   const schedulable = instruments.filter((i) => i.intakeStatus === "ready" || i.intakeStatus === "override");
@@ -52,9 +57,17 @@ export default function AdminSittings() {
   const [sitAssessorId, setSitAssessorId] = useState("");
   const [sitInvigilatorIds, setSitInvigilatorIds] = useState<string[]>([]);
   const [sitIndependent, setSitIndependent] = useState(false);
+  const [sitVenue, setSitVenue] = useState("");
+  const [sitCapacity, setSitCapacity] = useState("");
   const [creating, setCreating] = useState(false);
 
   const chosenCohort = cohorts.find((c) => c.id === sitCohortId);
+  useEffect(() => {
+    const p = new URLSearchParams();
+    if (sitQualId) p.set("qualificationId", sitQualId);
+    if (sitStart && sitEnd && new Date(sitEnd) > new Date(sitStart)) { p.set("start", new Date(sitStart).toISOString()); p.set("end", new Date(sitEnd).toISOString()); }
+    api.get<StaffingInfo>(`/sittings/staffing?${p}`).then(setStaffing).catch(() => {});
+  }, [sitQualId, sitStart, sitEnd]);
   // Papers for the cohort's qualification first, the rest after.
   const papersOrdered = [...schedulable].sort((a, b) => {
     const aq = chosenCohort?.qualificationId && a.qualificationId === chosenCohort.qualificationId ? 0 : 1;
@@ -66,23 +79,27 @@ export default function AdminSittings() {
   const toggle = (setter: React.Dispatch<React.SetStateAction<string[]>>, id: string) =>
     setter((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
-  async function createSitting(e: React.FormEvent) {
-    e.preventDefault();
+  async function createSitting(e: React.FormEvent | null, acceptWarnings = false) {
+    e?.preventDefault();
     setError(null);
     setMessage(null);
     setCreating(true);
     try {
-      const res = await api.post<{ id: string; allocation: CohortAllocation | null }>("/sittings", {
+      const res = await api.post<{ id: string; allocation: CohortAllocation | null; warnings: string[] }>("/sittings", {
         qualificationId: sitQualId,
         instrumentId: sitInstrId,
         cohortId: sitCohortId || undefined,
         name: sitName || undefined,
+        venue: sitVenue || undefined,
+        capacity: sitCapacity ? Number(sitCapacity) : undefined,
         startTime: new Date(sitStart).toISOString(),
         endTime: new Date(sitEnd).toISOString(),
         assignedAssessorId: sitAssessorId,
         invigilatorIds: sitInvigilatorIds,
         independentInvigilationRequired: sitIndependent,
+        acceptWarnings,
       });
+      setPendingWarnings(null);
       const a = res.allocation;
       setMessage(
         a
@@ -91,12 +108,18 @@ export default function AdminSittings() {
       );
       setSitInvigilatorIds([]);
       setSitName("");
-      setShowCreate(false);
+      setShowCreate("none");
       setParams({});
       await loadAll();
       setOpenId(res.id);
+      setView("list");
     } catch (err) {
-      setError((err as Error).message);
+      // 409 with needsAcceptance: the server wants the Administrator to see the
+      // warnings (scope not recorded, marking cap) and confirm.
+      const m = (err as Error).message;
+      const body = (err as Error & { body?: { needsAcceptance?: boolean; problems?: StaffingProblem[] } }).body;
+      if (body?.needsAcceptance && body.problems) setPendingWarnings(body.problems);
+      else setError(m);
     } finally {
       setCreating(false);
     }
@@ -115,16 +138,36 @@ export default function AdminSittings() {
         title="Schedule the Sitting"
         subtitle="A proctored window in which a cohort writes one paper, with its assessor and invigilators. Choose the cohort and everyone in it is on the roster at once. Only papers that passed the standard check (or carry an override) can be chosen."
         action={
-          <button className="btn whitespace-nowrap" onClick={() => setShowCreate((v) => !v)}>
-            {showCreate ? "Close" : <><PlusIcon /> New sitting</>}
-          </button>
+          <div className="flex items-center gap-2">
+            <button className="btn-ghost whitespace-nowrap" onClick={() => setShowCreate(showCreate === "series" ? "none" : "series")}>
+              {showCreate === "series" ? "Close" : "Plan a series"}
+            </button>
+            <button className="btn whitespace-nowrap" onClick={() => setShowCreate(showCreate === "single" ? "none" : "single")}>
+              {showCreate === "single" ? "Close" : <><PlusIcon /> New sitting</>}
+            </button>
+          </div>
         }
       />
 
       {error && <Notice kind="error">{error}</Notice>}
       {message && <Notice kind="success">{message}</Notice>}
 
-      {showCreate && (
+      {pendingWarnings && (
+        <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50/60 p-4 space-y-2">
+          <div className="font-display font-semibold text-[13.5px]">Before this sitting is created, note:</div>
+          <ul className="text-[13px] list-disc pl-5 space-y-0.5">{pendingWarnings.map((p, i) => <li key={i}>{p.message}</li>)}</ul>
+          <div className="flex gap-2 pt-1">
+            <button type="button" className="btn btn-sm" disabled={creating} onClick={() => createSitting(null, true)}>Create anyway</button>
+            <button type="button" className="btn-ghost btn-sm" onClick={() => setPendingWarnings(null)}>Go back and change it</button>
+          </div>
+        </div>
+      )}
+
+      {showCreate === "series" && (
+        <SeriesPlanner cohorts={cohorts} instruments={instruments} qualifications={qualifications} onCreated={async (m) => { setMessage(m); setError(null); setShowCreate("none"); await loadAll(); setView("calendar"); }} onError={(m) => setError(m || null)} />
+      )}
+
+      {showCreate === "single" && (
         <Card className="mb-5">
           <CardHead title="New sitting" />
           <form onSubmit={createSitting} className="px-5 pt-4 pb-5 space-y-4">
@@ -179,11 +222,13 @@ export default function AdminSittings() {
               </div>
               <div><label className="field-lbl">Start</label><input className="inp" type="datetime-local" value={sitStart} onChange={(e) => setSitStart(e.target.value)} required /></div>
               <div><label className="field-lbl">End</label><input className="inp" type="datetime-local" value={sitEnd} onChange={(e) => setSitEnd(e.target.value)} required /></div>
+              <div><label className="field-lbl">Venue / room <span className="normal-case font-normal text-ink-faint">— optional</span></label><input className="inp" value={sitVenue} onChange={(e) => setSitVenue(e.target.value)} placeholder="e.g. Durban Lab 2" /></div>
+              <div><label className="field-lbl">Seats <span className="normal-case font-normal text-ink-faint">— optional</span></label><input className="inp tabular" type="number" min={1} value={sitCapacity} onChange={(e) => setSitCapacity(e.target.value)} placeholder="room capacity" /></div>
               <div>
-                <label className="field-lbl">Assessor</label>
+                <label className="field-lbl">Assessor <span className="normal-case font-normal text-ink-faint">— scripts in flight / cap</span></label>
                 <select className="inp" value={sitAssessorId} onChange={(e) => setSitAssessorId(e.target.value)} required>
                   <option value="">Select…</option>
-                  {assessors.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  {assessors.map((a) => <option key={a.id} value={a.id}>{a.name} · {a.inFlight}/{a.cap}{a.inScope === false ? " · not in scope" : a.inScope === null && sitQualId ? " · scope not recorded" : ""}</option>)}
                 </select>
                 {assessors.length === 0 && <p className="text-xs text-amber-700 mt-1.5">No assessors registered yet — add one under Register People.</p>}
               </div>
@@ -203,8 +248,10 @@ export default function AdminSittings() {
                 )}
               </label>
               <div className="flex flex-wrap gap-2">
-                {invigilators.filter((inv) => !sitIndependent || inv.employmentRelationship === "external").map((inv) => (
-                  <CheckChip key={inv.id} checked={sitInvigilatorIds.includes(inv.id)} onChange={() => toggle(setSitInvigilatorIds, inv.id)}>{inv.name}</CheckChip>
+                {invigilators.filter((inv) => !sitIndependent || inv.employment === "external").map((inv) => (
+                  <CheckChip key={inv.id} checked={sitInvigilatorIds.includes(inv.id)} onChange={() => toggle(setSitInvigilatorIds, inv.id)}>
+                    {inv.name}{inv.busy.length ? <span className="text-amber-700" title={`Already on ${inv.busy[0].name ?? "another sitting"} at this time`}> ⚠ busy</span> : null}
+                  </CheckChip>
                 ))}
                 {invigilators.length === 0 && <span className="text-xs text-ink-faint">No invigilators registered yet.</span>}
               </div>
@@ -214,7 +261,16 @@ export default function AdminSittings() {
         </Card>
       )}
 
-      <Card>
+      <div className="flex gap-1 border-b border-line mb-4">
+        {([["list", "All sittings"], ["calendar", "Calendar"], ["workload", "Marking workload"]] as [View, string][]).map(([k, label]) => (
+          <button key={k} type="button" onClick={() => setView(k)} className={"px-3.5 py-2.5 -mb-px font-display text-[13.5px] font-semibold border-b-2 transition " + (view === k ? "text-brand-700 border-brand-600" : "text-ink-muted border-transparent hover:text-ink")}>{label}</button>
+        ))}
+      </div>
+
+      {view === "calendar" && <SittingsCalendar onOpen={(id) => { setView("list"); setOpenId(id); }} />}
+      {view === "workload" && <MarkingWorkload />}
+
+      {view === "list" && <Card>
         <CardHead title="All sittings" subtitle={sittings.length ? `${sittings.length} scheduled` : undefined} />
         <div className="px-2 pb-2">
           {sittings.length ? (
@@ -228,7 +284,7 @@ export default function AdminSittings() {
                     <tr className={openId === s.id ? "bg-brand-50/30" : ""}>
                       <td>
                         <div className="font-semibold">{s.name ?? s.qualificationTitle}</div>
-                        <div className="t-sub">{s.name ? s.qualificationTitle + " · " : ""}{typeWord(qualifications.find((q) => q.id === s.qualificationId)?.qctoRegistrationType)}</div>
+                        <div className="t-sub">{s.name ? s.qualificationTitle + " · " : ""}{typeWord(qualifications.find((q) => q.id === s.qualificationId)?.qctoRegistrationType)}{s.venue ? ` · ${s.venue}` : ""}{s.capacity ? ` · ${s.capacity} seats` : ""}</div>
                       </td>
                       <td>{s.cohortId ? <Link to={`/admin/cohorts/${s.cohortId}`} className="lnk">{s.cohortName}</Link> : <span className="text-ink-faint">—</span>}</td>
                       <td>{fmt(s.startTime)} <span className="text-ink-faint">→</span> {fmt(s.endTime)}</td>
@@ -255,7 +311,7 @@ export default function AdminSittings() {
             <Empty>No sittings yet — create the first one above.</Empty>
           )}
         </div>
-      </Card>
+      </Card>}
     </>
   );
 }

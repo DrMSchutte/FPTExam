@@ -106,8 +106,10 @@ export const users = pgTable("users", {
   idNumberEnc: text("id_number_enc"),
   idNumberLast4: text("id_number_last4"),
   studentNumber: text("student_number").unique(),
-  // Assessors / moderators: their professional registration number.
+  // Assessors / moderators: their professional registration number, and how
+  // many scripts they may have in flight at once (null = the 60 default).
   registrationNumber: text("registration_number"),
+  markingCap: integer("marking_cap"),
   status: userStatusEnum("status").notNull().default("invited"),
   // First successful set-up (or sign-in) - what turns invited into active.
   activatedAt: timestamp("activated_at", { withTimezone: true }),
@@ -270,6 +272,30 @@ export const cohortMembers = pgTable(
   })
 );
 
+// A series is one paper written by one (or more) cohorts across several
+// sittings - different rooms, dates or times - created and staffed in one
+// action (build plan Block 3).
+export const sittingSeries = pgTable("sitting_series", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  qualificationId: uuid("qualification_id").notNull().references(() => qualifications.id),
+  instrumentId: uuid("instrument_id").notNull().references(() => assessmentInstruments.id),
+  cohortId: uuid("cohort_id").references(() => cohorts.id, { onDelete: "set null" }),
+  createdBy: uuid("created_by").notNull().references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// The qualifications an assessor is registered to assess. No rows = scope not
+// recorded yet (allowed, flagged); rows present = enforced when allocating.
+export const assessorScopes = pgTable(
+  "assessor_scopes",
+  {
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    qualificationId: uuid("qualification_id").notNull().references(() => qualifications.id, { onDelete: "cascade" }),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.userId, t.qualificationId] }) })
+);
+
 export const examSittings = pgTable("exam_sittings", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   qualificationId: uuid("qualification_id")
@@ -282,6 +308,9 @@ export const examSittings = pgTable("exam_sittings", {
   // sitting whose learners were added one by one.
   cohortId: uuid("cohort_id").references(() => cohorts.id, { onDelete: "set null" }),
   name: text("name"),
+  seriesId: uuid("series_id").references(() => sittingSeries.id, { onDelete: "set null" }),
+  venue: text("venue"),
+  capacity: integer("capacity"),
   startTime: timestamp("start_time", { withTimezone: true }).notNull(),
   endTime: timestamp("end_time", { withTimezone: true }).notNull(),
   proctoringProfile: jsonb("proctoring_profile").notNull(),

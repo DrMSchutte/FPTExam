@@ -1,13 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import { PageHeader, Card, CardHead, Notice, Badge, TypePill, Empty } from "../../components/ui";
-import type { IntakeRoute } from "@shared/types";
+import type { IntakeRoute, Cohort, Qualification } from "@shared/types";
 import { RouteBadge } from "../../components/intake";
 
 interface ResultRow {
   sessionId: string;
+  learnerId: string;
   learnerName: string;
   learnerEmail: string;
+  studentNumber: string | null;
+  idNumberMasked: string | null;
+  cohortId: string | null;
+  cohortName: string | null;
+  sittingName: string | null;
   qualificationTitle: string;
   qctoRegistrationType: "fisa" | "eisa" | "non_qcto";
   intakeRoute: IntakeRoute;
@@ -31,13 +38,32 @@ const fmt = (iso: string | null) =>
 export default function AdminResults() {
   const [rows, setRows] = useState<ResultRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [cohorts, setCohorts] = useState<Cohort[]>([]);
+  const [qualifications, setQualifications] = useState<Qualification[]>([]);
+  const [f, setF] = useState({ cohortId: "", qualificationId: "", outcome: "", from: "", to: "", q: "" });
+  const debouncedQ = useDebounced(f.q, 300);
+
+  const query = () => {
+    const p = new URLSearchParams();
+    if (f.cohortId) p.set("cohortId", f.cohortId);
+    if (f.qualificationId) p.set("qualificationId", f.qualificationId);
+    if (f.outcome) p.set("outcome", f.outcome);
+    if (f.from) p.set("from", new Date(f.from).toISOString());
+    if (f.to) { const d = new Date(f.to); d.setHours(23, 59, 59, 999); p.set("to", d.toISOString()); }
+    if (debouncedQ.trim()) p.set("q", debouncedQ.trim());
+    return p.toString();
+  };
 
   useEffect(() => {
+    api.get<Cohort[]>("/cohorts").then(setCohorts).catch(() => {});
+    api.get<Qualification[]>("/qualifications").then(setQualifications).catch(() => {});
+  }, []);
+  useEffect(() => {
     api
-      .get<ResultRow[]>("/assessments/results")
+      .get<ResultRow[]>(`/assessments/results?${query()}`)
       .then(setRows)
       .catch((err) => setError((err as Error).message));
-  }, []);
+  }, [f.cohortId, f.qualificationId, f.outcome, f.from, f.to, debouncedQ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const competent = rows?.filter((r) => r.outcome === "competent").length ?? 0;
   const pending = rows?.filter((r) => r.pushStatus !== "sent").length ?? 0;
@@ -68,16 +94,38 @@ export default function AdminResults() {
       </div>
 
       <Card>
-        <CardHead title="Released results" subtitle="Most recent first" />
+        <CardHead title="Released results" subtitle="Most recent first" right={<a className="btn-ghost btn-sm" href={`/api/assessments/results/export.csv?${query()}`}>Export results sheet (CSV)</a>} />
+        <div className="px-5 pb-3 flex items-center gap-2 flex-wrap border-b border-line">
+          <input className="inp max-w-[220px]" placeholder="Search learner…" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} />
+          <select className="inp !w-auto max-w-[240px]" value={f.cohortId} onChange={(e) => setF({ ...f, cohortId: e.target.value })}>
+            <option value="">All cohorts</option>
+            {cohorts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <select className="inp !w-auto max-w-[260px]" value={f.qualificationId} onChange={(e) => setF({ ...f, qualificationId: e.target.value })}>
+            <option value="">All qualifications</option>
+            {qualifications.map((q) => <option key={q.id} value={q.id}>{q.title}</option>)}
+          </select>
+          <select className="inp !w-auto" value={f.outcome} onChange={(e) => setF({ ...f, outcome: e.target.value })}>
+            <option value="">Any outcome</option>
+            <option value="competent">Competent</option>
+            <option value="not_yet_competent">Not yet competent</option>
+          </select>
+          <span className="t-sub">signed off</span>
+          <input className="inp !w-auto" type="date" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} />
+          <span className="t-sub">to</span>
+          <input className="inp !w-auto" type="date" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} />
+          {(f.cohortId || f.qualificationId || f.outcome || f.from || f.to || f.q) && <button type="button" className="btn-ghost btn-sm" onClick={() => setF({ cohortId: "", qualificationId: "", outcome: "", from: "", to: "", q: "" })}>Clear</button>}
+        </div>
         {!rows ? (
           <Empty>Loading…</Empty>
         ) : rows.length === 0 ? (
-          <Empty>No results have been signed off yet.</Empty>
+          <Empty>{f.cohortId || f.qualificationId || f.outcome || f.from || f.to || f.q ? "No released results match these filters." : "No results have been signed off yet."}</Empty>
         ) : (
           <table className="data">
             <thead>
               <tr>
                 <th>Learner</th>
+                <th>Cohort</th>
                 <th>Assessment</th>
                 <th>Sat</th>
                 <th>Result</th>
@@ -89,9 +137,10 @@ export default function AdminResults() {
               {rows.map((r) => (
                 <tr key={r.sessionId}>
                   <td>
-                    <p className="font-semibold">{r.learnerName}</p>
-                    <p className="t-sub">{r.learnerEmail}</p>
+                    <Link to={`/admin/people/${r.learnerId}`} className="font-semibold hover:underline">{r.learnerName}</Link>
+                    <p className="t-sub">{r.idNumberMasked ?? r.learnerEmail}{r.studentNumber ? ` · ${r.studentNumber}` : ""}</p>
                   </td>
+                  <td>{r.cohortId ? <Link to={`/admin/cohorts/${r.cohortId}`} className="lnk">{r.cohortName}</Link> : <span className="text-ink-faint">—</span>}</td>
                   <td>
                     <div className="flex items-center gap-2">
                       <TypePill type={r.qctoRegistrationType} />
@@ -129,4 +178,15 @@ export default function AdminResults() {
       </Card>
     </>
   );
+}
+
+function useDebounced<T>(value: T, ms: number): T {
+  const [v, setV] = useState(value);
+  const t = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (t.current) clearTimeout(t.current);
+    t.current = setTimeout(() => setV(value), ms);
+    return () => { if (t.current) clearTimeout(t.current); };
+  }, [value, ms]);
+  return v;
 }

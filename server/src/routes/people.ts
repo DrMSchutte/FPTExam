@@ -17,6 +17,7 @@ import {
   accountSetupTokens,
   cohorts,
   cohortMembers,
+  assessorScopes,
 } from "../db/schema.js";
 import { requireAuth, requireRole, forgetAccountStatus, type AuthedRequest } from "../auth/middleware.js";
 import { hashPassword } from "../auth/password.js";
@@ -294,8 +295,13 @@ peopleRouter.get("/:id", requireAuth, requireRole("administrator"), async (req, 
     .orderBy(desc(auditLog.occurredAt))
     .limit(20);
 
+  const scopeRows = roles.includes("assessor")
+    ? await db.select({ id: qualifications.id, title: qualifications.title }).from(assessorScopes).innerJoin(qualifications, eq(qualifications.id, assessorScopes.qualificationId)).where(eq(assessorScopes.userId, u.id))
+    : [];
   return res.json({
     ...personRow(u, roles, (await cohortsFor([u.id])).get(u.id) ?? []),
+    markingCap: u.markingCap,
+    scope: scopeRows,
     setup: { liveLinkExpiresAt: liveLink?.expiresAt?.toISOString() ?? null, activatedAt: u.activatedAt?.toISOString() ?? null, hasAuthenticator: Boolean(u.mfaSecret) },
     sittings,
     assessing,
@@ -315,6 +321,10 @@ const patchSchema = z.object({
   employmentRelationship: z.enum(["internal", "external"]).nullable().optional(),
   status: statusParam.optional(),
   reason: z.string().trim().max(500).optional(),
+  // Assessors: scripts in flight allowed (null = default 60) and the
+  // qualifications they are registered to assess.
+  markingCap: z.number().int().min(1).max(1000).nullable().optional(),
+  scopeQualificationIds: z.array(z.string().uuid()).max(200).optional(),
 });
 
 peopleRouter.patch("/:id", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
@@ -343,7 +353,13 @@ peopleRouter.patch("/:id", requireAuth, requireRole("administrator"), async (req
       if (dupe) return res.status(409).json({ error: `That ID number is already registered to ${dupe.name}.` });
     }
   }
+  if (p.scopeQualificationIds !== undefined) {
+    await db.delete(assessorScopes).where(eq(assessorScopes.userId, u.id));
+    if (p.scopeQualificationIds.length) await db.insert(assessorScopes).values(p.scopeQualificationIds.map((qualificationId) => ({ userId: u.id, qualificationId }))).onConflictDoNothing();
+    await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "assessor_scope_set", targetType: "user", targetId: u.id, reason: `${p.scopeQualificationIds.length} qualification(s)` });
+  }
   const set: Partial<typeof users.$inferInsert> = {};
+  if (p.markingCap !== undefined) set.markingCap = p.markingCap;
   if (p.name !== undefined) set.name = p.name;
   if (p.email !== undefined) set.email = p.email;
   if (p.studentNumber !== undefined) set.studentNumber = p.studentNumber || null;
@@ -356,7 +372,7 @@ peopleRouter.patch("/:id", requireAuth, requireRole("administrator"), async (req
     set.idNumberHash = idn ? hashIdentifier(idn) : null;
   }
   if (p.status !== undefined) set.status = p.status;
-  const [updated] = await db.update(users).set(set).where(eq(users.id, u.id)).returning();
+  const [updated] = Object.keys(set).length ? await db.update(users).set(set).where(eq(users.id, u.id)).returning() : [u];
   forgetAccountStatus(u.id);
   await db.insert(auditLog).values({
     actorId: req.auth!.userId,

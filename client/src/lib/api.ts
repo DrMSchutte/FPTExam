@@ -11,7 +11,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = body as ApiError;
-    throw new Error(describeError(err, path, res.status));
+    // The full JSON body rides along so callers can act on structured errors
+    // (e.g. staffing warnings the Administrator may accept).
+    throw Object.assign(new Error(describeError(err, path, res.status)), { status: res.status, body });
   }
   return body as T;
 }

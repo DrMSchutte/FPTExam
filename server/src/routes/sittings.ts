@@ -13,8 +13,11 @@ import {
   cohortMembers,
   qualifications,
   auditLog,
+  sittingSeries,
+  assessorDecisions,
 } from "../db/schema.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
+import { checkStaffing, cohortLearners, learnerClashes, assessorLoads, assessorScopeMap, invigilatorClashes, invigilatorsNeeded, DEFAULT_MARKING_CAP } from "../scheduling/staffing.js";
 
 export const sittingsRouter = Router();
 
@@ -39,6 +42,11 @@ const createSchema = z.object({
   assignedAssessorId: z.string().uuid(),
   invigilatorIds: z.array(z.string().uuid()).default([]),
   independentInvigilationRequired: z.boolean().default(false),
+  venue: z.string().trim().max(120).optional(),
+  capacity: z.number().int().positive().max(5000).optional(),
+  // Non-blocking staffing warnings (scope not recorded, cap exceeded) are shown
+  // to the Administrator first; the request is repeated with this set.
+  acceptWarnings: z.boolean().default(false),
 });
 
 async function rolesFor(userIds: string[]) {
@@ -74,6 +82,9 @@ sittingsRouter.post(
       assignedAssessorId,
       invigilatorIds,
       independentInvigilationRequired,
+      venue,
+      capacity,
+      acceptWarnings,
     } = parsed.data;
 
     let cohort: typeof cohorts.$inferSelect | undefined;
@@ -101,37 +112,25 @@ sittingsRouter.post(
       });
     }
 
-    // Role-independence check (Section 2): the Assessor of record cannot
-    // also be one of this sitting's Invigilators, even if their account
-    // holds both roles in the abstract (Phase 1 already blocks the most
-    // common case - one account with both roles - but a Head QA-style
-    // dual-role account or a data-entry mistake could still slip an
-    // assessor in as an invigilator on one specific sitting without this).
-    if (invigilatorIds.includes(assignedAssessorId)) {
-      return res.status(400).json({
-        error: "The assigned Assessor cannot also be listed as an Invigilator on this sitting.",
-      });
-    }
-
-    const relevantIds = [assignedAssessorId, ...invigilatorIds];
-    const roleMap = await rolesFor(relevantIds);
-    const usersById = new Map(
-      (await db.select().from(users).where(inArray(users.id, relevantIds))).map((u) => [u.id, u])
-    );
-
-    if (!(roleMap.get(assignedAssessorId) ?? []).includes("assessor")) {
-      return res.status(400).json({ error: "assignedAssessorId does not belong to an Assessor account." });
-    }
-    for (const invId of invigilatorIds) {
-      if (!(roleMap.get(invId) ?? []).includes("invigilator")) {
-        return res.status(400).json({ error: `Invigilator ${invId} does not hold the Invigilator role.` });
-      }
-      if (independentInvigilationRequired && usersById.get(invId)?.employmentRelationship !== "external") {
-        return res.status(400).json({
-          error: `This sitting requires independent invigilation, but invigilator ${invId} is not marked external.`,
-        });
-      }
-    }
+    // Staffing rules (scheduling/staffing.ts): assessor/invigilator roles and
+    // independence, the 1:30 ratio against the cohort, the assessor's scope and
+    // marking cap, and invigilator clashes. Blocking problems refuse; warnings
+    // refuse unless the Administrator has accepted them (acceptWarnings).
+    let expectedLearners = 0;
+    if (cohort && allocateCohort) expectedLearners = (await cohortLearners([cohort.id])).ids.length;
+    const problems = await checkStaffing({
+      qualificationId,
+      assessorId: assignedAssessorId,
+      invigilatorIds,
+      independent: independentInvigilationRequired,
+      learners: expectedLearners,
+      windows: [{ start: new Date(startTime), end: new Date(endTime) }],
+      assessorAddedScripts: expectedLearners,
+    });
+    const blocking = problems.filter((p) => p.blocking);
+    if (blocking.length) return res.status(400).json({ error: blocking[0].message, problems });
+    const needAck = problems.filter((p) => p.code !== "scope_unknown");
+    if (needAck.length && !acceptWarnings) return res.status(409).json({ error: needAck[0].message, problems, needsAcceptance: true });
 
     const [created] = await db
       .insert(examSittings)
@@ -140,6 +139,8 @@ sittingsRouter.post(
         instrumentId,
         cohortId: cohort?.id ?? null,
         name: name || null,
+        venue: venue || null,
+        capacity: capacity ?? null,
         startTime: new Date(startTime),
         endTime: new Date(endTime),
         proctoringProfile: proctoringProfileSchema.parse(proctoringProfile ?? {}),
@@ -167,7 +168,7 @@ sittingsRouter.post(
       reason: cohort ? `for cohort ${cohort.name}${allocation ? ` (${allocation.assigned} learners allocated)` : ""}` : "learners added individually",
     });
 
-    return res.status(201).json({ ...created, allocation });
+    return res.status(201).json({ ...created, allocation, warnings: problems.map((p) => p.message) });
   }
 );
 
@@ -299,7 +300,10 @@ sittingsRouter.get(
   }
 );
 
-sittingsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
+const isUuid = (v: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+
+sittingsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res, next) => {
+  if (!isUuid(req.params.id)) return next(); // /staffing, /calendar, /workload below
   const [sitting] = await db.select().from(examSittings).where(eq(examSittings.id, req.params.id));
   if (!sitting) return res.status(404).json({ error: "Sitting not found." });
   const invigilators = await db
@@ -354,3 +358,274 @@ sittingsRouter.post(
     return res.status(201).json({ assigned: toInsert.length, alreadyAssigned: already.size });
   }
 );
+
+// ---- Block 3: staffing lookup, series, calendar, marking workload ------------------------
+
+// Who is available to staff a sitting in a window: assessors with their load,
+// cap and scope for the qualification; invigilators with any clash.
+sittingsRouter.get("/staffing", requireAuth, requireRole("administrator"), async (req, res) => {
+  const q = z.object({ start: z.string().datetime().optional(), end: z.string().datetime().optional(), qualificationId: z.string().uuid().optional() }).safeParse(req.query);
+  if (!q.success) return res.status(400).json({ error: "Invalid query." });
+  const staff = await db
+    .select({ id: users.id, name: users.name, status: users.status, employment: users.employmentRelationship, role: userRoles.role })
+    .from(users)
+    .innerJoin(userRoles, eq(userRoles.userId, users.id))
+    .where(and(inArray(userRoles.role, ["assessor", "invigilator"]), inArray(users.status, ["active", "invited"])))
+    .orderBy(asc(users.name));
+  const assessorIds = staff.filter((s) => s.role === "assessor").map((s) => s.id);
+  const invigilatorIds = staff.filter((s) => s.role === "invigilator").map((s) => s.id);
+  const [loads, scopes] = await Promise.all([assessorLoads(assessorIds), assessorScopeMap(assessorIds)]);
+  const win = q.data.start && q.data.end ? { start: new Date(q.data.start), end: new Date(q.data.end) } : null;
+  const clashes = win ? await invigilatorClashes(invigilatorIds, win) : new Map();
+  return res.json({
+    ratio: 30,
+    assessors: staff
+      .filter((s) => s.role === "assessor")
+      .map((s) => {
+        const l = loads.get(s.id) ?? { inFlight: 0, waiting: 0, cap: DEFAULT_MARKING_CAP };
+        const scope = scopes.get(s.id);
+        return { id: s.id, name: s.name, inFlight: l.inFlight, waiting: l.waiting, cap: l.cap, scope: scope ? [...scope] : null, inScope: q.data.qualificationId ? (scope ? scope.has(q.data.qualificationId) : null) : null };
+      }),
+    invigilators: staff
+      .filter((s) => s.role === "invigilator")
+      .map((s) => ({ id: s.id, name: s.name, employment: s.employment, busy: (clashes.get(s.id) ?? []).map((c: { name: string | null; startTime: Date }) => ({ name: c.name, startTime: c.startTime.toISOString() })) })),
+  });
+});
+
+const slotSchema = z.object({
+  startTime: z.string().datetime(),
+  endTime: z.string().datetime(),
+  venue: z.string().trim().max(120).optional(),
+  capacity: z.number().int().positive().max(5000).optional(),
+  invigilatorIds: z.array(z.string().uuid()).default([]),
+  assessorId: z.string().uuid().optional(), // overrides the series assessor for this slot
+});
+
+const seriesSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  instrumentId: z.string().uuid(),
+  cohortIds: z.array(z.string().uuid()).min(1).max(20),
+  assessorId: z.string().uuid(),
+  independentInvigilationRequired: z.boolean().default(false),
+  proctoringProfile: proctoringProfileSchema.optional(),
+  slots: z.array(slotSchema).min(1).max(60),
+  acceptWarnings: z.boolean().default(false),
+  // Preview only: run every check and the split, create nothing.
+  dryRun: z.boolean().default(false),
+});
+
+// One paper, one or more cohorts, many sittings: the cohort's students are
+// split across the slots by capacity (evenly when no capacities are given),
+// every slot is checked against the staffing rules, and everything is created
+// together - or nothing is.
+sittingsRouter.post("/series", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
+  const parsed = seriesSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid request body.", detail: parsed.error.message });
+  const p = parsed.data;
+
+  const [instrument] = await db.select().from(assessmentInstruments).where(eq(assessmentInstruments.id, p.instrumentId));
+  if (!instrument) return res.status(404).json({ error: "Paper not found." });
+  if (instrument.intakeStatus !== "ready" && instrument.intakeStatus !== "override") {
+    return res.status(400).json({ error: "This paper does not meet the assessment standard and cannot be scheduled." });
+  }
+  const cohortRows = await db.select().from(cohorts).where(inArray(cohorts.id, p.cohortIds));
+  if (cohortRows.length !== p.cohortIds.length) return res.status(404).json({ error: "One of the cohorts was not found." });
+  const closed = cohortRows.find((c) => c.status === "closed");
+  if (closed) return res.status(409).json({ error: `${closed.name} is closed. Reopen it to schedule for it.` });
+
+  for (const s of p.slots) if (new Date(s.endTime) <= new Date(s.startTime)) return res.status(400).json({ error: "Every slot's end must be after its start." });
+  const slots = [...p.slots].sort((a, b) => a.startTime.localeCompare(b.startTime));
+
+  // Learners and clashes.
+  const { ids: learners, skippedInactive } = await cohortLearners(p.cohortIds);
+  const seriesWindow = { start: new Date(slots[0].startTime), end: new Date(slots.reduce((m, s) => (s.endTime > m ? s.endTime : m), slots[0].endTime)) };
+  const clashing = await learnerClashes(learners, seriesWindow);
+  const toPlace = learners.filter((id) => !clashing.has(id));
+
+  // Split by capacity; even split when no capacities were given.
+  const total = toPlace.length;
+  const anyCap = slots.some((s) => s.capacity);
+  const sizes = slots.map((s, i) => (anyCap ? s.capacity ?? 0 : Math.ceil((total - Math.floor(total / slots.length) * i) / (slots.length - i))));
+  if (!anyCap) {
+    // exact even split
+    const base = Math.floor(total / slots.length);
+    let rem = total - base * slots.length;
+    for (let i = 0; i < slots.length; i++) sizes[i] = base + (rem-- > 0 ? 1 : 0);
+  }
+  const groups: string[][] = [];
+  let cursor = 0;
+  for (const size of sizes) {
+    groups.push(toPlace.slice(cursor, cursor + size));
+    cursor += size;
+  }
+  const unplaced = toPlace.slice(cursor);
+
+  // Staffing per slot; invigilator double-booking within the series itself.
+  const problems: { slot: number; code: string; message: string; blocking: boolean }[] = [];
+  const seen = new Map<string, number>();
+  for (let i = 0; i < slots.length; i++) {
+    for (const j of slots.slice(0, i).keys()) {
+      const a = slots[j], b = slots[i];
+      if (new Date(a.startTime) < new Date(b.endTime) && new Date(b.startTime) < new Date(a.endTime)) {
+        for (const inv of b.invigilatorIds) if (a.invigilatorIds.includes(inv)) problems.push({ slot: i + 1, code: "invigilator_clash", blocking: true, message: `The same invigilator is on sittings ${j + 1} and ${i + 1}, which overlap.` });
+      }
+    }
+    seen.set(String(i), i);
+  }
+  const scriptsByAssessor = new Map<string, number>();
+  for (let i = 0; i < slots.length; i++) {
+    const a = slots[i].assessorId ?? p.assessorId;
+    scriptsByAssessor.set(a, (scriptsByAssessor.get(a) ?? 0) + groups[i].length);
+  }
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i];
+    const assessorId = slot.assessorId ?? p.assessorId;
+    const ps = await checkStaffing({
+      qualificationId: instrument.qualificationId,
+      assessorId,
+      invigilatorIds: slot.invigilatorIds,
+      independent: p.independentInvigilationRequired,
+      learners: groups[i].length,
+      windows: [{ start: new Date(slot.startTime), end: new Date(slot.endTime) }],
+      assessorAddedScripts: scriptsByAssessor.get(assessorId) ?? 0,
+    });
+    for (const x of ps) if (!(x.code === "cap" && problems.some((y) => y.code === "cap" && y.message === x.message))) problems.push({ slot: i + 1, ...x });
+  }
+  if (learners.length > 0 && total === 0) problems.push({ slot: 0, code: "nobody_free", blocking: true, message: `None of the ${learners.length} students can be placed: every one is already on a sitting that overlaps this period. Choose other dates, or check the existing sittings on the calendar.` });
+  else if (learners.length === 0) problems.push({ slot: 0, code: "no_students", blocking: true, message: "The chosen cohort has no active students to place." });
+  if (unplaced.length) problems.push({ slot: 0, code: "capacity", blocking: false, message: `${unplaced.length} student${unplaced.length === 1 ? "" : "s"} do not fit the capacities given (${total} to place, ${sizes.reduce((a, b) => a + b, 0)} seats). Add a sitting or raise a capacity; otherwise they are left off.` });
+  if (clashing.size) problems.push({ slot: 0, code: "learner_clash", blocking: false, message: `${clashing.size} student${clashing.size === 1 ? " is" : "s are"} already on another sitting in this period and ${clashing.size === 1 ? "is" : "are"} left off.` });
+  if (skippedInactive) problems.push({ slot: 0, code: "inactive", blocking: false, message: `${skippedInactive} suspended or archived student${skippedInactive === 1 ? "" : "s"} left off.` });
+
+  const plan = slots.map((s, i) => ({ slot: i + 1, startTime: s.startTime, endTime: s.endTime, venue: s.venue ?? null, capacity: s.capacity ?? null, learners: groups[i].length, invigilators: s.invigilatorIds.length, invigilatorsNeeded: invigilatorsNeeded(groups[i].length), assessorId: s.assessorId ?? p.assessorId }));
+  const blocking = problems.filter((x) => x.blocking);
+  if (blocking.length) return res.status(400).json({ error: blocking[0].message, problems, plan, totalLearners: learners.length });
+  if (p.dryRun) return res.json({ dryRun: true, plan, problems, totalLearners: learners.length, placed: total - unplaced.length });
+  const needAck = problems.filter((x) => x.code !== "scope_unknown");
+  if (needAck.length && !p.acceptWarnings) return res.status(409).json({ error: needAck[0].message, problems, plan, needsAcceptance: true, totalLearners: learners.length });
+
+  const created = await db.transaction(async (tx) => {
+    const [series] = await tx
+      .insert(sittingSeries)
+      .values({ name: p.name, qualificationId: instrument.qualificationId, instrumentId: instrument.id, cohortId: p.cohortIds.length === 1 ? p.cohortIds[0] : null, createdBy: req.auth!.userId })
+      .returning();
+    const out: { id: string; name: string; startTime: string; venue: string | null; learners: number }[] = [];
+    for (let i = 0; i < slots.length; i++) {
+      const slot = slots[i];
+      const name = `${p.name} · ${i + 1} of ${slots.length}${slot.venue ? ` · ${slot.venue}` : ""}`;
+      const [sitting] = await tx
+        .insert(examSittings)
+        .values({
+          qualificationId: instrument.qualificationId,
+          instrumentId: instrument.id,
+          cohortId: p.cohortIds.length === 1 ? p.cohortIds[0] : null,
+          seriesId: series.id,
+          name,
+          venue: slot.venue ?? null,
+          capacity: slot.capacity ?? null,
+          startTime: new Date(slot.startTime),
+          endTime: new Date(slot.endTime),
+          proctoringProfile: proctoringProfileSchema.parse(p.proctoringProfile ?? {}),
+          assignedAssessorId: slot.assessorId ?? p.assessorId,
+          independentInvigilationRequired: p.independentInvigilationRequired,
+          createdBy: req.auth!.userId,
+        })
+        .returning();
+      if (slot.invigilatorIds.length) await tx.insert(sittingInvigilators).values(slot.invigilatorIds.map((invigilatorId) => ({ sittingId: sitting.id, invigilatorId })));
+      for (let k = 0; k < groups[i].length; k += 500) {
+        await tx.insert(learnerSessions).values(groups[i].slice(k, k + 500).map((learnerId) => ({ sittingId: sitting.id, learnerId, status: "scheduled" as const })));
+      }
+      out.push({ id: sitting.id, name, startTime: sitting.startTime.toISOString(), venue: sitting.venue, learners: groups[i].length });
+    }
+    await tx.insert(auditLog).values({
+      actorId: req.auth!.userId,
+      action: "sitting_series_created",
+      targetType: "sitting_series",
+      targetId: series.id,
+      reason: `${p.name}: ${slots.length} sittings, ${total - unplaced.length} of ${learners.length} students placed from ${cohortRows.map((c) => c.name).join(", ")}`,
+    });
+    return { seriesId: series.id, sittings: out };
+  });
+
+  return res.status(201).json({ ...created, plan, problems, totalLearners: learners.length, placed: total - unplaced.length, unplaced: unplaced.length });
+});
+
+// Sittings in a date range, for the calendar.
+sittingsRouter.get("/calendar", requireAuth, requireRole("administrator", "assessor", "invigilator"), async (req: AuthedRequest, res) => {
+  const q = z.object({ from: z.string().datetime(), to: z.string().datetime() }).safeParse(req.query);
+  if (!q.success) return res.status(400).json({ error: "Invalid query: from and to (ISO) are required." });
+  const rows = await db
+    .select({
+      id: examSittings.id,
+      name: examSittings.name,
+      venue: examSittings.venue,
+      capacity: examSittings.capacity,
+      startTime: examSittings.startTime,
+      endTime: examSittings.endTime,
+      seriesId: examSittings.seriesId,
+      qualificationTitle: qualifications.title,
+      cohortName: cohorts.name,
+      assessorName: users.name,
+      learners: sql<number>`(SELECT count(*)::int FROM ${learnerSessions} ls WHERE ls.sitting_id = ${examSittings.id})`,
+      invigilators: sql<number>`(SELECT count(*)::int FROM ${sittingInvigilators} si WHERE si.sitting_id = ${examSittings.id})`,
+    })
+    .from(examSittings)
+    .innerJoin(qualifications, eq(qualifications.id, examSittings.qualificationId))
+    .innerJoin(users, eq(users.id, examSittings.assignedAssessorId))
+    .leftJoin(cohorts, eq(cohorts.id, examSittings.cohortId))
+    .where(and(sql`${examSittings.startTime} < ${new Date(q.data.to)}`, sql`${examSittings.endTime} > ${new Date(q.data.from)}`))
+    .orderBy(asc(examSittings.startTime));
+  return res.json(rows.map((r) => ({ ...r, startTime: r.startTime.toISOString(), endTime: r.endTime.toISOString(), invigilatorsNeeded: invigilatorsNeeded(r.learners) })));
+});
+
+// Marking workload board: what every assessor has waiting, how fast they turn
+// scripts round, and what is overdue (waiting longer than OVERDUE_DAYS).
+const OVERDUE_DAYS = 5;
+sittingsRouter.get("/workload", requireAuth, requireRole("administrator"), async (_req, res) => {
+  const assessors = await db
+    .select({ id: users.id, name: users.name, status: users.status, cap: users.markingCap })
+    .from(users)
+    .innerJoin(userRoles, and(eq(userRoles.userId, users.id), eq(userRoles.role, "assessor")))
+    .where(inArray(users.status, ["active", "invited", "suspended"]))
+    .orderBy(asc(users.name));
+  const ids = assessors.map((a) => a.id);
+  const loads = await assessorLoads(ids);
+  const scopes = await assessorScopeMap(ids);
+  const stats = ids.length
+    ? await db
+        .select({
+          assessorId: examSittings.assignedAssessorId,
+          overdue: sql<number>`count(*) FILTER (WHERE ${learnerSessions.status} IN ('submitted','sealed') AND ${assessorDecisions.signedOffAt} IS NULL AND ${learnerSessions.submissionTime} < now() - interval '${sql.raw(String(OVERDUE_DAYS))} days')::int`,
+          signedOff30d: sql<number>`count(*) FILTER (WHERE ${assessorDecisions.signedOffAt} > now() - interval '30 days')::int`,
+          avgTurnaroundHours: sql<number | null>`round(avg(EXTRACT(EPOCH FROM (${assessorDecisions.signedOffAt} - ${learnerSessions.submissionTime})) / 3600) FILTER (WHERE ${assessorDecisions.signedOffAt} IS NOT NULL AND ${learnerSessions.submissionTime} IS NOT NULL)::numeric, 1)::float`,
+          upcoming: sql<number>`count(DISTINCT ${examSittings.id}) FILTER (WHERE ${examSittings.startTime} > now())::int`,
+        })
+        .from(examSittings)
+        .leftJoin(learnerSessions, eq(learnerSessions.sittingId, examSittings.id))
+        .leftJoin(assessorDecisions, eq(assessorDecisions.sessionId, learnerSessions.id))
+        .where(inArray(examSittings.assignedAssessorId, ids))
+        .groupBy(examSittings.assignedAssessorId)
+    : [];
+  const byId = new Map(stats.map((s) => [s.assessorId, s]));
+  const qualTitles = new Map((await db.select({ id: qualifications.id, title: qualifications.title }).from(qualifications)).map((q) => [q.id, q.title]));
+  return res.json({
+    overdueAfterDays: OVERDUE_DAYS,
+    assessors: assessors.map((a) => {
+      const l = loads.get(a.id) ?? { inFlight: 0, waiting: 0, cap: DEFAULT_MARKING_CAP };
+      const s = byId.get(a.id);
+      return {
+        id: a.id,
+        name: a.name,
+        status: a.status,
+        cap: l.cap,
+        inFlight: l.inFlight,
+        waiting: l.waiting,
+        overdue: s?.overdue ?? 0,
+        signedOff30d: s?.signedOff30d ?? 0,
+        avgTurnaroundHours: s?.avgTurnaroundHours ?? null,
+        upcomingSittings: s?.upcoming ?? 0,
+        scope: [...(scopes.get(a.id) ?? [])].map((q) => qualTitles.get(q) ?? q),
+      };
+    }),
+  });
+});

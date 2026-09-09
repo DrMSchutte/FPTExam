@@ -91,6 +91,27 @@ ratio you set (e.g. 1:30) and the independence rule. Clash check for double-book
 *Done when:* a series of 6 sittings for 900 learners is created and staffed in under ten
 minutes with no manual counting.
 
+**Delivered 9 Sep 2026.** *Plan a series* on Schedule the Sitting: choose cohort(s), the
+paper and the assessor of record, give a room size and *Quick plan* lays out the sittings
+(two a day), or add them by hand — date, minutes, venue, seats, invigilators (with a
+*Fill N free* button). *Check the plan* shows the split and every rule finding before
+anything is created; *Create* makes all the sittings and rosters together, or none. In
+the test a 6-sitting series for 900 students was checked and created in 147 ms. Rules
+enforced (refused): 1 invigilator per 30 learners; assessor outside their recorded scope;
+an invigilator on two overlapping sittings (existing or within the series); assessor as
+invigilator; independent invigilation when required; nobody free to place. Noted
+(created after the Administrator accepts): assessor over their marking cap (60 unless set
+on their person page); seats short (students left off, counted); students already booked
+in the period (left off); scope not yet recorded (note only). Students already on an
+overlapping sitting are never double-booked. The same rules now apply to a single sitting.
+*Calendar* tab: month view, sittings short of invigilators in amber, click through to the
+roster. *Marking workload* tab: per assessor — scripts waiting, overdue (> 5 days),
+in flight against cap, signed off in 30 days, average turnaround, upcoming sittings,
+scope. Person page (assessors): *Assessment scope* card — qualifications registered to
+assess and marking cap. Results: filters by learner, cohort, qualification, outcome and
+sign-off date; *Export results sheet (CSV)* — one row per released result with mark,
+percentage, outcome, assessor and FPTStaff status (ID last four only).
+
 ### Block 4 — Moderator role — DROPPED 9 Sep 2026 (moderation stays in FPTStaff)
 *What you get:* Moderator as a fifth role with its own queue: sampling of signed-off
 scripts by rule (e.g. 10% or at least 5, all borderline, all fails), moderation record

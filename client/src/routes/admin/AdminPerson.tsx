@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
-import type { PersonDetail, EmploymentRelationship } from "@shared/types";
+import type { PersonDetail, EmploymentRelationship, Qualification } from "@shared/types";
 import { PageHeader, Card, CardHead, Notice, Badge, Empty } from "../../components/ui";
 import SetupLinkPanel, { type SetupIssue } from "../../components/SetupLinkPanel";
 import { StatusBadge } from "./AdminUsers";
@@ -246,6 +246,7 @@ export default function AdminPerson() {
               )}
             </Card>
           )}
+          {isAssessor && <AssessorScopeCard person={p} onSaved={async (m) => { setMessage(m); await load(); }} onError={setError} />}
           {isAssessor && (
             <Card>
               <CardHead title="Marking" subtitle={`${p.assessing.length} sitting${p.assessing.length === 1 ? "" : "s"} assigned`} />
@@ -348,5 +349,68 @@ export default function AdminPerson() {
         </div>
       </div>
     </>
+  );
+}
+
+
+// Block 3: what an assessor is registered to assess, and how many scripts they
+// may have in flight. Scheduling refuses an assessor outside their scope once a
+// scope is recorded, and warns when an allocation would exceed the cap.
+function AssessorScopeCard({ person, onSaved, onError }: { person: PersonDetail; onSaved: (m: string) => Promise<void>; onError: (m: string | null) => void }) {
+  const [qualifications, setQualifications] = useState<Qualification[]>([]);
+  const [editing, setEditing] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set(person.scope.map((s) => s.id)));
+  const [cap, setCap] = useState(person.markingCap ? String(person.markingCap) : "");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api.get<Qualification[]>("/qualifications").then(setQualifications).catch(() => {}); }, []);
+  useEffect(() => { setPicked(new Set(person.scope.map((s) => s.id))); setCap(person.markingCap ? String(person.markingCap) : ""); }, [person]);
+
+  async function save() {
+    setBusy(true);
+    try {
+      await api.patch(`/people/${person.id}`, { scopeQualificationIds: [...picked], markingCap: cap ? Number(cap) : null, reason: "assessment scope / marking cap" });
+      setEditing(false);
+      await onSaved("Assessment scope saved.");
+    } catch (err) { onError((err as Error).message); } finally { setBusy(false); }
+  }
+
+  return (
+    <Card>
+      <CardHead
+        title="Assessment scope"
+        subtitle="Qualifications this assessor is registered to assess, and the most scripts they should have in flight at once."
+        right={editing ? (
+          <div className="flex gap-2"><button type="button" className="btn-ghost btn-sm" onClick={() => setEditing(false)} disabled={busy}>Cancel</button><button type="button" className="btn btn-sm" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</button></div>
+        ) : <button type="button" className="btn-ghost btn-sm" onClick={() => setEditing(true)}>Edit</button>}
+      />
+      <div className="px-5 pb-5 text-[13.5px] space-y-3">
+        {editing ? (
+          <>
+            <div className="rounded-lg border border-line max-h-56 overflow-auto divide-y divide-line">
+              {qualifications.map((q) => (
+                <label key={q.id} className="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-surface-2">
+                  <input type="checkbox" className="accent-brand-600" checked={picked.has(q.id)} onChange={() => setPicked((p) => { const n = new Set(p); if (n.has(q.id)) n.delete(q.id); else n.add(q.id); return n; })} />
+                  <span>{q.title}</span>
+                </label>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="field-lbl !mb-0">Marking cap</label>
+              <input className="inp !w-24 tabular" type="number" min={1} value={cap} onChange={(e) => setCap(e.target.value)} placeholder="60" />
+              <span className="t-sub">scripts in flight (blank = 60)</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              {person.scope.length === 0
+                ? <span className="text-amber-700">No scope recorded — scheduling will warn until it is. </span>
+                : <ul className="list-disc pl-5 space-y-0.5">{person.scope.map((s) => <li key={s.id}>{s.title}</li>)}</ul>}
+            </div>
+            <div className="text-ink-muted">Marking cap: <span className="text-ink tabular">{person.markingCap ?? 60}</span> scripts in flight{person.markingCap ? "" : " (default)"}</div>
+          </>
+        )}
+      </div>
+    </Card>
   );
 }

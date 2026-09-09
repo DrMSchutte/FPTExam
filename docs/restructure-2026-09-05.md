@@ -119,6 +119,15 @@ assessor, invigilators. Every sitting has a roster — paged, searchable, add an
 or individual students, take off anyone who has not started. The roster is what the
 Invigilator console (Block 5) shows live.
 
+### Scheduling at scale (Block 3, delivered 9 Sep 2026)
+*Plan a series*: one paper, one or more cohorts, several sittings across rooms and dates,
+split by seats and staffed in one action, with the plan checked before creation. Rules
+that refuse: 1 invigilator to 30 learners, assessor scope, invigilator clashes, assessor as
+invigilator, independence, no one free to place. Rules that warn and need acceptance:
+marking cap (60 by default, per assessor), seats short, students already booked. Calendar
+month view; Marking workload board per assessor; assessor scope and cap on the person
+page; Results filtered by cohort/qualification/outcome/date with a CSV results sheet.
+
 ### The ID number is the student identifier (decision 9 Sep 2026)
 Every new student is registered with their 13-digit ID number; it is unique on FPT Exam
 (a second registration of the same number is refused and points to the existing record),

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
-import { eq, desc, isNotNull, and } from "drizzle-orm";
+import { eq, desc, isNotNull, and, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import {
   assessmentInstruments,
@@ -13,6 +13,8 @@ import {
   examSittings,
   users,
   fptstaffResultPushes,
+  cohorts,
+  auditLog,
 } from "../db/schema.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
 import { extractTextFromDocument, DocumentExtractionError } from "../integrations/qcto/extractDocumentText.js";
@@ -635,12 +637,38 @@ assessmentsRouter.post("/curricula-builder/import", requireAuth, requireRole("ad
 
 // ---- Results (administrator, read-only) ------------------------------------------
 
-assessmentsRouter.get("/results", requireAuth, requireRole("administrator"), async (_req, res) => {
+const resultsQuery = z.object({
+  cohortId: z.string().uuid().optional(),
+  qualificationId: z.string().uuid().optional(),
+  outcome: z.enum(["competent", "not_yet_competent"]).optional(),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+  q: z.string().trim().max(120).optional(),
+});
+
+// Signed-off results, filterable by cohort, qualification, outcome, date and
+// learner; the same filter feeds the CSV results sheet below.
+async function resultRows(f: z.infer<typeof resultsQuery>) {
+  const where = and(
+    isNotNull(assessorDecisions.signedOffAt),
+    f.cohortId ? eq(examSittings.cohortId, f.cohortId) : undefined,
+    f.qualificationId ? eq(examSittings.qualificationId, f.qualificationId) : undefined,
+    f.outcome ? eq(assessorDecisions.outcome, f.outcome) : undefined,
+    f.from ? sql`${assessorDecisions.signedOffAt} >= ${new Date(f.from)}` : undefined,
+    f.to ? sql`${assessorDecisions.signedOffAt} <= ${new Date(f.to)}` : undefined,
+    f.q ? sql`(${users.name} ILIKE ${"%" + f.q + "%"} OR ${users.email} ILIKE ${"%" + f.q + "%"} OR ${users.studentNumber} ILIKE ${"%" + f.q + "%"})` : undefined
+  );
   const rows = await db
     .select({
       sessionId: learnerSessions.id,
+      learnerId: users.id,
       learnerName: users.name,
       learnerEmail: users.email,
+      studentNumber: users.studentNumber,
+      idNumberLast4: users.idNumberLast4,
+      cohortId: examSittings.cohortId,
+      cohortName: cohorts.name,
+      sittingName: examSittings.name,
       qualificationTitle: qualifications.title,
       qctoRegistrationType: qualifications.qctoRegistrationType,
       instrumentVersion: assessmentInstruments.version,
@@ -660,13 +688,42 @@ assessmentsRouter.get("/results", requireAuth, requireRole("administrator"), asy
     .innerJoin(examSittings, eq(learnerSessions.sittingId, examSittings.id))
     .innerJoin(qualifications, eq(examSittings.qualificationId, qualifications.id))
     .innerJoin(assessmentInstruments, eq(examSittings.instrumentId, assessmentInstruments.id))
+    .leftJoin(cohorts, eq(cohorts.id, examSittings.cohortId))
     .leftJoin(fptstaffResultPushes, eq(fptstaffResultPushes.sessionId, learnerSessions.id))
-    .where(isNotNull(assessorDecisions.signedOffAt))
-    .orderBy(desc(assessorDecisions.signedOffAt));
-
+    .where(where)
+    .orderBy(desc(assessorDecisions.signedOffAt))
+    .limit(20000);
   const assessorIds = [...new Set(rows.map((r) => r.assessorId))];
-  const assessors = assessorIds.length ? await db.select({ id: users.id, name: users.name }).from(users) : [];
+  const assessors = assessorIds.length ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, assessorIds)) : [];
   const nameOf = new Map(assessors.map((a) => [a.id, a.name]));
+  return rows.map((r) => ({ ...r, assessorName: nameOf.get(r.assessorId) ?? "—", idNumberMasked: r.idNumberLast4 ? `••••••••• ${r.idNumberLast4}` : null }));
+}
 
-  return res.json(rows.map((r) => ({ ...r, assessorName: nameOf.get(r.assessorId) ?? "—" })));
+assessmentsRouter.get("/results", requireAuth, requireRole("administrator"), async (req, res) => {
+  const parsed = resultsQuery.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid query.", detail: parsed.error.message });
+  return res.json(await resultRows(parsed.data));
+});
+
+// The results sheet: one row per released result under the current filter.
+// Full ID numbers are never in it; the Statement of Results (Block 5) is the
+// only document that carries them.
+assessmentsRouter.get("/results/export.csv", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
+  const parsed = resultsQuery.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid query." });
+  const rows = await resultRows(parsed.data);
+  const esc = (v: unknown) => {
+    const t = v == null ? "" : String(v);
+    return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+  };
+  const header = ["learner", "email", "id_number_last4", "student_number", "cohort", "qualification", "paper", "sitting", "sat_on", "mark", "out_of", "percent", "outcome", "assessor", "signed_off_on", "fptstaff"];
+  const lines = [header.join(",")];
+  for (const r of rows) {
+    const pct = r.totalMark != null && r.totalMax ? Math.round((r.totalMark / r.totalMax) * 1000) / 10 : "";
+    lines.push([r.learnerName, r.learnerEmail, r.idNumberLast4, r.studentNumber, r.cohortName, r.qualificationTitle, r.instrumentVersion, r.sittingName, r.sittingStart.toISOString().slice(0, 10), r.totalMark, r.totalMax, pct, r.outcome === "competent" ? "Competent" : "Not yet competent", r.assessorName, r.signedOffAt?.toISOString().slice(0, 10), r.pushStatus ?? "pending"].map(esc).join(","));
+  }
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "results_exported", targetType: "result", targetId: null, reason: `${rows.length} rows${parsed.data.cohortId ? " (cohort filter)" : ""}` });
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="fpt-exam-results-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(lines.join("\n") + "\n");
 });
