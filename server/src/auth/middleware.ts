@@ -20,7 +20,7 @@ async function accountBlocked(userId: string): Promise<boolean> {
 export const forgetAccountStatus = (userId: string) => statusCache.delete(userId);
 
 export interface AuthedRequest extends Request {
-  auth?: { userId: string; roles: UserRole[] };
+  auth?: { userId: string; roles: UserRole[]; sittingSession?: string };
 }
 
 /**
@@ -42,7 +42,7 @@ export function requireAuth(req: AuthedRequest, res: Response, next: NextFunctio
   accountBlocked(payload.sub)
     .then((blocked) => {
       if (blocked) return res.status(403).json({ error: "This account is not active. Contact the FPT Academy Administrator." });
-      req.auth = { userId: payload.sub, roles: payload.roles };
+      req.auth = { userId: payload.sub, roles: payload.roles, sittingSession: payload.sittingSession };
       next();
     })
     .catch(next);

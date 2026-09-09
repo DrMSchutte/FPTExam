@@ -136,6 +136,23 @@ watching, an assessor signing off and the learner downloading their Statement.
 Added 9 Sep 2026: continuous live view of every learner for the invigilator; full-screen
 exam with tab/window switching detected, the paper locked and the invigilator alerted.
 
+Delivered in four parts. **5a — sitting codes and check-in (delivered 9 Sep 2026).**
+Every learner on a roster gets a one-time sitting code (`XXXX-XXXX-XXXX`, no look-alike
+characters) issued from the roster and printed as a list or cut-out slips (`Print
+codes`, audited). At `/sit` the learner enters the code with their own 13-digit ID
+number — both must match — from 45 minutes before the start; the code works once, and
+the invigilator can *Allow re-entry* after a drop-out. Check-in: the conditions (identity
+check, camera and screen captures, live invigilation, 12-month retention, the right to
+see one's own recordings) accepted and recorded with version and time; camera and
+microphone check; an identity photo taken from the webcam and stored as evidence
+(visible to the Administrator and the sitting's invigilator on the roster); then the
+waiting room with a countdown. The paper opens only after check-in and only inside the
+window — the server enforces this for every sign-in path. A code sign-in is scoped to
+that one exam: it cannot read results or other sittings. Roster shows code issued/used,
+consent, photo, camera, and the check-in / writing / submitted state.
+*Still to come:* 5b the locked full-screen paper with captures and focus-loss detection,
+5c the invigilator console and integrity engine, 5d the Statement of Results.
+
 ### Block 6 — Phase E: FPTStaff connection
 *What you get:* People and cohorts pulled from FPTStaff by section; manual adds pushed
 back with duplicate guard; results and Statements pushed on sign-off; moderation /

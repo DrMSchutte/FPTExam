@@ -1,6 +1,8 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import Login from "./routes/Login";
 import AccountSetup from "./routes/AccountSetup";
+import SitCheckIn from "./routes/SitCheckIn";
+import SittingCodesPrint from "./routes/admin/SittingCodesPrint";
 import { ProtectedRoute } from "./lib/ProtectedRoute";
 import { useAuth } from "./lib/auth";
 import AdminDashboard from "./routes/admin/AdminDashboard";
@@ -39,6 +41,15 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/setup/:token" element={<AccountSetup />} />
+      <Route path="/sit" element={<SitCheckIn />} />
+      <Route
+        path="/print/sittings/:id/codes"
+        element={
+          <ProtectedRoute allow={["administrator", "invigilator"]}>
+            <SittingCodesPrint />
+          </ProtectedRoute>
+        }
+      />
       <Route path="/" element={<Home />} />
       <Route
         path="/admin/*"

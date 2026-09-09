@@ -10,6 +10,7 @@ import {
   primaryKey,
   index,
   uniqueIndex,
+  customType,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -79,6 +80,10 @@ export const captureTypeEnum = pgEnum("capture_type", [
   "screenshot",
   "full_recording_chunk",
   "system_event",
+  "identity_photo", // taken at check-in, shown to the invigilator
+  "photo", // periodic webcam capture during the sitting
+  "screen", // periodic screen capture during the sitting
+  "focus_loss", // left the exam tab / window
 ]);
 
 export const incidentRaisedByEnum = pgEnum("incident_raised_by", [
@@ -370,6 +375,16 @@ export const learnerSessions = pgTable(
     submissionTime: timestamp("submission_time", { withTimezone: true }),
     answers: jsonb("answers"),
     sealHash: text("seal_hash"),
+    // Block 5a: the learner's one-time sitting code (encrypted for the roster
+    // print-out, hashed for look-up), how often it has been used, and whether
+    // the invigilator has allowed the learner back in after a drop-out.
+    codeEnc: text("code_enc"),
+    codeHash: text("code_hash"),
+    codeIssuedAt: timestamp("code_issued_at", { withTimezone: true }),
+    entries: integer("entries").notNull().default(0),
+    reentryAllowed: boolean("reentry_allowed").notNull().default(false),
+    // {consentAt, consentVersion, deviceAt, camera, microphone, screen, userAgent, identityPhotoId, checkedInAt}
+    precheck: jsonb("precheck"),
   },
   (t) => ({
     uniqSittingLearner: uniqueIndex("uq_learner_sessions_sitting_learner").on(
@@ -394,6 +409,23 @@ export const captureEvents = pgTable(
   (t) => ({
     sessionIdx: index("idx_capture_events_session").on(t.sessionId),
   })
+);
+
+// Captured evidence bytes (identity photos, periodic photos and screens).
+// Kept in the database so a Repl restart never loses them; swept 12 months
+// after the sitting unless a hold is set (Block 5c).
+export const evidenceBlobs = pgTable(
+  "evidence_blobs",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    sessionId: uuid("session_id").notNull().references(() => learnerSessions.id, { onDelete: "cascade" }),
+    kind: captureTypeEnum("kind").notNull(),
+    mime: text("mime").notNull(),
+    bytes: customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" })("bytes").notNull(),
+    sha256: text("sha256").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ sessionIdx: index("idx_evidence_blobs_session").on(t.sessionId) })
 );
 
 export const incidentLog = pgTable("incident_log", {

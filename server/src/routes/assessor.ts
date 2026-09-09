@@ -442,6 +442,8 @@ assessorRouter.post("/sessions/:id/sign-off", requireAuth, requireRole("assessor
 // ---- Learner's result: visible iff signed off ---------------------------------
 
 assessorRouter.get("/sessions/:id/result", requireAuth, requireRole("learner"), async (req: AuthedRequest, res) => {
+  // A sitting-code cookie is for writing that one exam, not for reading results.
+  if (req.auth!.sittingSession) return res.status(403).json({ error: "Sign in with your account to see results." });
   const [row] = await db
     .select({ session: learnerSessions, sitting: examSittings, decision: assessorDecisions })
     .from(learnerSessions)

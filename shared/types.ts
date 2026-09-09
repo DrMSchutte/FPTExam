@@ -143,6 +143,14 @@ export interface SittingRosterRow {
   sessionStatus: string;
   checkInTime: string | null;
   submissionTime: string | null;
+  // Block 5a
+  codeIssued: boolean;
+  entries: number;
+  reentryAllowed: boolean;
+  consent: boolean;
+  identityPhotoId: string | null;
+  camera: boolean | null;
+  microphone: boolean | null;
 }
 
 export interface StaffingProblem { code: string; message: string; blocking: boolean; slot?: number }

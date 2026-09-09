@@ -4,6 +4,9 @@ import type { UserRole } from "../types.js";
 export interface SessionTokenPayload {
   sub: string; // user id
   roles: UserRole[];
+  // Block 5a: a token issued from a sitting code is scoped to that one exam
+  // session (the learner's other sittings and results stay out of reach).
+  sittingSession?: string;
 }
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -12,8 +15,8 @@ if (!JWT_SECRET) {
 }
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN ?? "8h";
 
-export function issueSessionToken(payload: SessionTokenPayload): string {
-  return jwt.sign(payload, JWT_SECRET as string, { expiresIn: JWT_EXPIRES_IN as any });
+export function issueSessionToken(payload: SessionTokenPayload, expiresInSeconds?: number): string {
+  return jwt.sign(payload, JWT_SECRET as string, { expiresIn: (expiresInSeconds ?? JWT_EXPIRES_IN) as any });
 }
 
 export function verifySessionToken(token: string): SessionTokenPayload {

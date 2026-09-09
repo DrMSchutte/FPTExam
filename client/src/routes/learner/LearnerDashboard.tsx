@@ -50,11 +50,20 @@ export default function LearnerDashboard() {
     loadSittings();
   }, [loadSittings]);
 
+  // Arriving from the check-in flow (/sit): open that session straight away.
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    const open = new URLSearchParams(window.location.search).get("open");
+    if (!open || autoOpened.current || !sittings.length) return;
+    const s = sittings.find((x) => x.sessionId === open);
+    if (s) { autoOpened.current = true; openSession(s.sessionId, s.status); }
+  }, [sittings]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function openSession(sessionId: string, status: string) {
     setError(null);
     setSubmitted(false);
     try {
-      if (status === "scheduled") {
+      if (status === "scheduled" || status === "checked_in") {
         await api.post(`/sessions/${sessionId}/start`);
       }
       const fetched = await api.get<PaperResponse>(`/sessions/${sessionId}/paper`);

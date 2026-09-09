@@ -8,7 +8,8 @@ import { enqueueJob } from "../jobs/runner.js";
 
 export const sessionsRouter = Router();
 
-async function loadOwnedSession(sessionId: string, learnerId: string) {
+async function loadOwnedSession(sessionId: string, learnerId: string, scope?: string) {
+  if (scope && scope !== sessionId) return null; // a sitting-code cookie opens one session only
   const [session] = await db
     .select()
     .from(learnerSessions)
@@ -19,6 +20,15 @@ async function loadOwnedSession(sessionId: string, learnerId: string) {
 // Learner's own sittings, with just enough sitting context to show a list -
 // no instrument content here, that's a separate call once the exam starts.
 sessionsRouter.get("/me/sittings", requireAuth, requireRole("learner"), async (req: AuthedRequest, res) => {
+  if (req.auth!.sittingSession) {
+    // Scoped to one sitting: the list is just that sitting.
+    const rows = await db
+      .select({ sessionId: learnerSessions.id, status: learnerSessions.status, checkInTime: learnerSessions.checkInTime, submissionTime: learnerSessions.submissionTime, sittingId: examSittings.id, startTime: examSittings.startTime, endTime: examSittings.endTime, qualificationId: examSittings.qualificationId })
+      .from(learnerSessions)
+      .innerJoin(examSittings, eq(learnerSessions.sittingId, examSittings.id))
+      .where(and(eq(learnerSessions.id, req.auth!.sittingSession), eq(learnerSessions.learnerId, req.auth!.userId)));
+    return res.json(rows);
+  }
   const rows = await db
     .select({
       sessionId: learnerSessions.id,
@@ -42,14 +52,26 @@ sessionsRouter.get("/me/sittings", requireAuth, requireRole("learner"), async (r
 // 3 here is deliberately "no proctoring yet" per the build brief's phase
 // order, so this is a plain start action.
 sessionsRouter.post("/sessions/:id/start", requireAuth, requireRole("learner"), async (req: AuthedRequest, res) => {
-  const session = await loadOwnedSession(req.params.id, req.auth!.userId);
+  const session = await loadOwnedSession(req.params.id, req.auth!.userId, req.auth!.sittingSession);
   if (!session) return res.status(404).json({ error: "Session not found." });
-  if (session.status !== "scheduled") {
+  if (session.status === "in_progress") return res.json(session); // already writing (re-entry)
+  if (session.status !== "scheduled" && session.status !== "checked_in") {
     return res.status(400).json({ error: `Cannot start a session in status '${session.status}'.` });
   }
+  // Block 5a: every sitting is proctored - the paper opens only after the
+  // learner has accepted the conditions and taken an identity photo, and only
+  // inside the sitting's window.
+  const p = (session.precheck ?? {}) as { consentAt?: string; identityPhotoId?: string };
+  if (!p.consentAt || !p.identityPhotoId) {
+    return res.status(400).json({ error: "Complete the check-in first: accept the conditions and take your identity photo.", checkInRequired: true });
+  }
+  const [sitting] = await db.select().from(examSittings).where(eq(examSittings.id, session.sittingId));
+  const now = Date.now();
+  if (sitting && now < sitting.startTime.getTime()) return res.status(403).json({ error: "The sitting has not started yet.", startsAt: sitting.startTime.toISOString() });
+  if (sitting && now >= sitting.endTime.getTime()) return res.status(403).json({ error: "The sitting has ended." });
   const [updated] = await db
     .update(learnerSessions)
-    .set({ status: "in_progress", checkInTime: new Date() })
+    .set({ status: "in_progress", checkInTime: session.checkInTime ?? new Date() })
     .where(eq(learnerSessions.id, session.id))
     .returning();
   return res.json(updated);
@@ -58,7 +80,7 @@ sessionsRouter.post("/sessions/:id/start", requireAuth, requireRole("learner"), 
 // The learner-facing paper: strips model_answer/rubric content out of each
 // question so the marking guide never reaches the client.
 sessionsRouter.get("/sessions/:id/paper", requireAuth, requireRole("learner"), async (req: AuthedRequest, res) => {
-  const session = await loadOwnedSession(req.params.id, req.auth!.userId);
+  const session = await loadOwnedSession(req.params.id, req.auth!.userId, req.auth!.sittingSession);
   if (!session) return res.status(404).json({ error: "Session not found." });
   if (session.status === "scheduled") {
     return res.status(400).json({ error: "Start the session before requesting the paper." });
@@ -97,7 +119,7 @@ sessionsRouter.post("/sessions/:id/answers", requireAuth, requireRole("learner")
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid request body.", detail: parsed.error.message });
   }
-  const session = await loadOwnedSession(req.params.id, req.auth!.userId);
+  const session = await loadOwnedSession(req.params.id, req.auth!.userId, req.auth!.sittingSession);
   if (!session) return res.status(404).json({ error: "Session not found." });
   if (session.status !== "in_progress") {
     return res.status(400).json({ error: `Cannot save answers for a session in status '${session.status}'.` });
@@ -115,7 +137,7 @@ sessionsRouter.post("/sessions/:id/answers", requireAuth, requireRole("learner")
 // hash-chain seal for captured evidence, once proctoring exists - here it's
 // just the status/timestamp transition for the answers themselves).
 sessionsRouter.post("/sessions/:id/submit", requireAuth, requireRole("learner"), async (req: AuthedRequest, res) => {
-  const session = await loadOwnedSession(req.params.id, req.auth!.userId);
+  const session = await loadOwnedSession(req.params.id, req.auth!.userId, req.auth!.sittingSession);
   if (!session) return res.status(404).json({ error: "Session not found." });
   if (session.status !== "in_progress") {
     return res.status(400).json({ error: `Cannot submit a session in status '${session.status}'.` });

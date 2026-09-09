@@ -17,6 +17,7 @@ import {
   assessorDecisions,
 } from "../db/schema.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
+import { issueCodes, codesForPrint } from "./sit.js";
 import { checkStaffing, cohortLearners, learnerClashes, assessorLoads, assessorScopeMap, invigilatorClashes, invigilatorsNeeded, DEFAULT_MARKING_CAP } from "../scheduling/staffing.js";
 
 export const sittingsRouter = Router();
@@ -236,6 +237,10 @@ sittingsRouter.get("/:id/learners", requireAuth, requireRole("administrator", "i
       sessionStatus: learnerSessions.status,
       checkInTime: learnerSessions.checkInTime,
       submissionTime: learnerSessions.submissionTime,
+      codeIssued: sql<boolean>`${learnerSessions.codeHash} IS NOT NULL`,
+      entries: learnerSessions.entries,
+      reentryAllowed: learnerSessions.reentryAllowed,
+      precheck: learnerSessions.precheck,
     })
     .from(learnerSessions)
     .innerJoin(users, eq(users.id, learnerSessions.learnerId))
@@ -249,13 +254,22 @@ sittingsRouter.get("/:id/learners", requireAuth, requireRole("administrator", "i
     .where(eq(learnerSessions.sittingId, sitting.id))
     .groupBy(learnerSessions.status);
   return res.json({
-    rows: rows.map((r) => ({
-      ...r,
-      idNumberMasked: r.idNumberLast4 ? `••••••••• ${r.idNumberLast4}` : null,
-      idNumberLast4: undefined,
-      checkInTime: r.checkInTime?.toISOString() ?? null,
-      submissionTime: r.submissionTime?.toISOString() ?? null,
-    })),
+    rows: rows.map((r) => {
+      const p = (r.precheck ?? {}) as { consentAt?: string; identityPhotoId?: string; camera?: boolean; microphone?: boolean };
+      return {
+        ...r,
+        precheck: undefined,
+        idNumberMasked: r.idNumberLast4 ? `••••••••• ${r.idNumberLast4}` : null,
+        idNumberLast4: undefined,
+        checkInTime: r.checkInTime?.toISOString() ?? null,
+        submissionTime: r.submissionTime?.toISOString() ?? null,
+        consent: Boolean(p.consentAt),
+        identityPhotoId: p.identityPhotoId ?? null,
+        camera: p.camera ?? null,
+        microphone: p.microphone ?? null,
+      };
+    }),
+    codesIssued: rows.length ? (await db.select({ n: sql<number>`count(*)::int` }).from(learnerSessions).where(and(eq(learnerSessions.sittingId, sitting.id), sql`${learnerSessions.codeHash} IS NOT NULL`)))[0].n : 0,
     total: count,
     page,
     pageSize,
@@ -628,4 +642,47 @@ sittingsRouter.get("/workload", requireAuth, requireRole("administrator"), async
       };
     }),
   });
+});
+
+
+// ---- Block 5a: sitting codes and re-entry (staff) --------------------------------------------
+
+async function staffOnSitting(req: AuthedRequest, sittingId: string) {
+  const [sitting] = await db.select().from(examSittings).where(eq(examSittings.id, sittingId));
+  if (!sitting) return null;
+  if (req.auth!.roles.includes("administrator")) return sitting;
+  const [inv] = await db.select().from(sittingInvigilators).where(and(eq(sittingInvigilators.sittingId, sitting.id), eq(sittingInvigilators.invigilatorId, req.auth!.userId)));
+  return inv ? sitting : null;
+}
+
+// Issue codes for everyone on the roster without one (or re-issue for the
+// learners named). Codes are shown once here and on the print-out.
+sittingsRouter.post("/:id/codes", requireAuth, requireRole("administrator", "invigilator"), async (req: AuthedRequest, res) => {
+  const parsed = z.object({ learnerIds: z.array(z.string().uuid()).max(5000).optional(), reissue: z.boolean().default(false) }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Invalid request body." });
+  const sitting = await staffOnSitting(req, req.params.id);
+  if (!sitting) return res.status(404).json({ error: "Sitting not found." });
+  const r = await issueCodes(sitting.id, req.auth!.userId, parsed.data.learnerIds, parsed.data.reissue);
+  return res.json(r);
+});
+
+// The print-out: every learner on the roster with their code. Audited.
+sittingsRouter.get("/:id/codes", requireAuth, requireRole("administrator", "invigilator"), async (req: AuthedRequest, res) => {
+  const sitting = await staffOnSitting(req, req.params.id);
+  if (!sitting) return res.status(404).json({ error: "Sitting not found." });
+  const rows = await codesForPrint(sitting.id);
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "sitting_codes_viewed", targetType: "sitting", targetId: sitting.id, reason: `${rows.length} learners` });
+  const [q] = await db.select({ title: qualifications.title }).from(qualifications).where(eq(qualifications.id, sitting.qualificationId));
+  return res.json({ sitting: { id: sitting.id, name: sitting.name, venue: sitting.venue, startTime: sitting.startTime.toISOString(), endTime: sitting.endTime.toISOString(), qualificationTitle: q?.title ?? "" }, rows });
+});
+
+// A learner whose code has been used (browser crash, wrong machine) is let
+// back in once by the invigilator; the next entry consumes it again.
+sittingsRouter.post("/:id/learners/:learnerId/allow-reentry", requireAuth, requireRole("administrator", "invigilator"), async (req: AuthedRequest, res) => {
+  const sitting = await staffOnSitting(req, req.params.id);
+  if (!sitting) return res.status(404).json({ error: "Sitting not found." });
+  const [row] = await db.update(learnerSessions).set({ reentryAllowed: true }).where(and(eq(learnerSessions.sittingId, sitting.id), eq(learnerSessions.learnerId, req.params.learnerId))).returning({ id: learnerSessions.id });
+  if (!row) return res.status(404).json({ error: "That learner is not on this sitting." });
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "sitting_reentry_allowed", targetType: "session", targetId: row.id });
+  return res.json({ ok: true });
 });

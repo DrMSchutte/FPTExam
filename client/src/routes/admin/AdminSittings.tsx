@@ -321,7 +321,8 @@ export default function AdminSittings() {
 const SESSION_LABEL: Record<string, string> = { scheduled: "Scheduled", checked_in: "Checked in", in_progress: "Writing", submitted: "Submitted", sealed: "Sealed" };
 
 function Roster({ sitting, cohorts, onChanged, onError }: { sitting: SittingListRow; cohorts: Cohort[]; onChanged: (m: string) => Promise<void>; onError: (m: string) => void }) {
-  const [data, setData] = useState<{ rows: SittingRosterRow[]; total: number; byStatus: Record<string, number> } | null>(null);
+  const [data, setData] = useState<{ rows: SittingRosterRow[]; total: number; byStatus: Record<string, number>; codesIssued: number } | null>(null);
+  const [photo, setPhoto] = useState<{ name: string; id: string } | null>(null);
   const [q, setQ] = useState("");
   const debounced = useDebounced(q, 300);
   const [page, setPage] = useState(1);
@@ -346,6 +347,24 @@ function Roster({ sitting, cohorts, onChanged, onError }: { sitting: SittingList
       const r = await api.post<CohortAllocation>(`/sittings/${sitting.id}/assign-cohort`, { cohortId: addCohortId });
       await onChanged(`${r.cohortName}: ${r.assigned} allocated${r.alreadyAssigned ? `, ${r.alreadyAssigned} already on the roster` : ""}${r.skipped ? `, ${r.skipped} suspended/archived left out` : ""}.`);
       setAddCohortId("");
+      await load();
+    } catch (err) { onError((err as Error).message); }
+  }
+
+  async function issueCodes(reissue = false) {
+    if (reissue && !window.confirm(`Re-issue codes for ${selected.size} selected learner${selected.size === 1 ? "" : "s"}? Their old codes stop working.`)) return;
+    try {
+      const r = await api.post<{ issued: number; total: number }>(`/sittings/${sitting.id}/codes`, reissue ? { learnerIds: [...selected], reissue: true } : {});
+      await onChanged(`${r.issued} sitting code${r.issued === 1 ? "" : "s"} issued. Print them from the roster.`);
+      setSelected(new Set());
+      await load();
+    } catch (err) { onError((err as Error).message); }
+  }
+
+  async function allowReentry(r: SittingRosterRow) {
+    try {
+      await api.post(`/sittings/${sitting.id}/learners/${r.learnerId}/allow-reentry`);
+      await onChanged(`${r.name} may enter the sitting again with the same code.`);
       await load();
     } catch (err) { onError((err as Error).message); }
   }
@@ -378,6 +397,20 @@ function Roster({ sitting, cohorts, onChanged, onError }: { sitting: SittingList
         <button type="button" className="btn btn-sm" disabled={!addCohortId} onClick={addCohort}>Add cohort</button>
         <button type="button" className="btn-ghost btn-sm" onClick={() => setAddMode(addMode === "search" ? "none" : "search")}>{addMode === "search" ? "Done" : "Add individual students"}</button>
       </div>
+      <div className="flex items-center gap-3 flex-wrap rounded-md border border-line bg-surface px-3 py-2 text-[13px]">
+        <span className="font-semibold">Sitting codes</span>
+        <span className="t-sub">{data ? `${data.codesIssued} of ${total} issued` : "…"} · each learner enters their code with their ID number at <span className="font-mono">{window.location.host}/sit</span></span>
+        <span className="flex-1" />
+        {data && data.codesIssued < total && <button type="button" className="btn btn-sm" onClick={() => issueCodes(false)}>Issue codes for {total - data.codesIssued}</button>}
+        {selected.size > 0 && <button type="button" className="btn-ghost btn-sm" onClick={() => issueCodes(true)}>Re-issue for {selected.size} selected</button>}
+        {data && data.codesIssued > 0 && <Link to={`/print/sittings/${sitting.id}/codes`} className="btn-ghost btn-sm" target="_blank">Print codes</Link>}
+      </div>
+      {photo && (
+        <div className="rounded-md border border-line bg-surface p-3 flex items-start gap-4">
+          <img src={`/api/sit/evidence/${photo.id}`} alt={`Identity photo of ${photo.name}`} className="h-44 rounded-md border border-line" />
+          <div className="text-[13px]"><div className="font-semibold">{photo.name}</div><div className="t-sub">Identity photo taken at check-in.</div><button type="button" className="lnk mt-2" onClick={() => setPhoto(null)}>Close</button></div>
+        </div>
+      )}
       {addMode === "search" && <AddIndividuals sittingId={sitting.id} onAdded={async (m) => { await onChanged(m); await load(); }} onError={onError} />}
       <div className="flex items-center gap-3">
         <input className="inp max-w-xs" placeholder="Find a student on this roster…" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -396,7 +429,7 @@ function Roster({ sitting, cohorts, onChanged, onError }: { sitting: SittingList
       ) : (
         <div className="rounded-md border border-line bg-surface overflow-hidden">
           <table className="data">
-            <thead><tr><th className="w-8"></th><th>Name</th><th>Email</th><th>ID number</th><th>Account</th><th>Exam</th></tr></thead>
+            <thead><tr><th className="w-8"></th><th>Name</th><th>Email</th><th>ID number</th><th>Code</th><th>Check-in</th><th>Exam</th><th></th></tr></thead>
             <tbody>
               {(data?.rows ?? []).map((r) => (
                 <tr key={r.sessionId}>
@@ -404,8 +437,14 @@ function Roster({ sitting, cohorts, onChanged, onError }: { sitting: SittingList
                   <td><Link to={`/admin/people/${r.learnerId}`} className="font-semibold hover:underline">{r.name}</Link></td>
                   <td className="text-ink-muted">{r.email}</td>
                   <td className="tabular text-ink-muted">{r.idNumberMasked ?? "—"}</td>
-                  <td><StatusBadge status={r.accountStatus} /></td>
-                  <td><Badge tone={r.sessionStatus === "scheduled" ? "gray" : r.sessionStatus === "in_progress" ? "blue" : "green"}>{SESSION_LABEL[r.sessionStatus] ?? r.sessionStatus}</Badge></td>
+                  <td className="text-[12.5px]">{r.codeIssued ? <span className="text-brand-700">issued{r.entries ? ` · used ${r.entries}×` : ""}</span> : <span className="text-ink-faint">none</span>}{r.reentryAllowed && <span className="text-amber-700"> · re-entry open</span>}</td>
+                  <td className="text-[12.5px]">
+                    {r.identityPhotoId ? <button type="button" className="lnk" onClick={() => setPhoto({ name: r.name, id: r.identityPhotoId! })}>photo ✓</button> : <span className="text-ink-faint">—</span>}
+                    {r.consent && <span className="text-ink-muted"> · consent ✓</span>}
+                    {r.camera === false && <span className="text-amber-700"> · no camera</span>}
+                  </td>
+                  <td><Badge tone={r.sessionStatus === "scheduled" ? "gray" : r.sessionStatus === "in_progress" ? "blue" : r.sessionStatus === "checked_in" ? "teal" : "green"}>{SESSION_LABEL[r.sessionStatus] ?? r.sessionStatus}</Badge>{r.accountStatus !== "active" && r.accountStatus !== "invited" && <div className="mt-0.5"><StatusBadge status={r.accountStatus} /></div>}</td>
+                  <td className="text-right">{r.codeIssued && r.entries > 0 && !r.reentryAllowed && r.sessionStatus !== "submitted" && r.sessionStatus !== "sealed" && <button type="button" className="lnk text-[12.5px]" onClick={() => allowReentry(r)}>Allow re-entry</button>}</td>
                 </tr>
               ))}
             </tbody>
