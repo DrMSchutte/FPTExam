@@ -7,6 +7,7 @@ import { learnerSessions, examSittings, users, qualifications, assessmentInstrum
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
 import { issueSessionToken } from "../auth/jwt.js";
 import { encryptField, decryptField, hashIdentifier } from "../auth/crypto.js";
+import { proctoringOf, recordIncident, submitSession, deadlineFor, SELF_RESUME_LIMIT, MIN_GAP, PHOTO_EVERY_S, SCREEN_EVERY_S, type ProctoringState } from "../proctoring/session.js";
 
 // Block 5a - the learner's way into a proctored sitting.
 //
@@ -265,3 +266,159 @@ export async function codesForPrint(sittingId: string) {
     .orderBy(users.name);
   return rows.map((r) => ({ sessionId: r.sessionId, name: r.name, idNumberLast4: r.idNumberLast4, studentNumber: r.studentNumber, code: r.codeEnc ? decryptField(r.codeEnc) : null, entries: r.entries, status: r.status }));
 }
+
+// ---- Block 5b: the locked paper ---------------------------------------------------------------
+
+
+async function saveProctoring(sessionId: string, p: ProctoringState) {
+  await db.update(learnerSessions).set({ proctoring: p }).where(eq(learnerSessions.id, sessionId));
+}
+
+// The room's view of the session: clock, lock state, capture cadence.
+export function roomStateOf(row: NonNullable<Awaited<ReturnType<typeof loadSitting>>>) {
+  const p = proctoringOf(row.session.proctoring);
+  const deadline = deadlineFor(row.session.startedAt, row.minutes, row.session.extraMinutes, row.sitting.endTime);
+  return {
+    sessionId: row.session.id,
+    status: row.session.status,
+    startedAt: row.session.startedAt?.toISOString() ?? null,
+    deadline: deadline.toISOString(),
+    serverTime: new Date().toISOString(),
+    extraMinutes: row.session.extraMinutes,
+    locked: Boolean(p.lockedAt),
+    lockReason: p.lockReason ?? null,
+    requiresInvigilator: Boolean(p.requiresInvigilator),
+    locks: p.locks,
+    selfResumesLeft: Math.max(0, SELF_RESUME_LIMIT - p.locks),
+    cadence: { photoEverySeconds: PHOTO_EVERY_S, screenEverySeconds: SCREEN_EVERY_S },
+    counts: { photos: p.photos, screens: p.screens, focusLosses: p.focusLosses, pasteAttempts: p.pasteAttempts },
+    sealHash: row.session.sealHash,
+  };
+}
+
+sitRouter.get("/:id/room", requireAuth, requireRole("learner"), async (req: AuthedRequest, res) => {
+  const row = await ownSession(req, req.params.id);
+  if (!row) return res.status(404).json({ error: "Sitting not found." });
+  return res.json({ ...stateOf(row), room: roomStateOf(row) });
+});
+
+// Something happened in the learner's browser. Focus loss and leaving full
+// screen lock the paper; the learner can put it back SELF_RESUME_LIMIT times,
+// after that an invigilator has to.
+const eventSchema = z.object({
+  type: z.enum(["focus_loss", "focus_return", "fullscreen_exit", "fullscreen_enter", "visibility_hidden", "paste_attempt", "copy_attempt", "screen_share", "screen_share_lost", "camera_lost", "camera_back", "devtools", "resize"]),
+  detail: z.record(z.string(), z.unknown()).optional(),
+});
+
+sitRouter.post("/:id/event", requireAuth, requireRole("learner"), async (req: AuthedRequest, res) => {
+  const parsed = eventSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid event." });
+  const row = await ownSession(req, req.params.id);
+  if (!row) return res.status(404).json({ error: "Sitting not found." });
+  if (row.session.status !== "in_progress") return res.json({ room: roomStateOf(row) });
+  const p = proctoringOf(row.session.proctoring);
+  const { type, detail = {} } = parsed.data;
+  const lockIt = (reason: string) => {
+    if (!p.lockedAt) {
+      p.locks += 1;
+      p.lockedAt = new Date().toISOString();
+      p.lockReason = reason;
+      p.requiresInvigilator = p.locks > SELF_RESUME_LIMIT;
+    }
+  };
+  switch (type) {
+    case "focus_loss":
+    case "visibility_hidden":
+      p.focusLosses += 1;
+      lockIt("You left the exam window.");
+      await recordIncident(row.session.id, "focus_loss", { ...detail, locks: p.locks });
+      break;
+    case "fullscreen_exit":
+      p.fullscreenExits += 1;
+      lockIt("You left full-screen mode.");
+      await recordIncident(row.session.id, "fullscreen_exit", { ...detail, locks: p.locks });
+      break;
+    case "paste_attempt":
+    case "copy_attempt":
+      p.pasteAttempts += 1;
+      await recordIncident(row.session.id, type, detail);
+      break;
+    case "screen_share": {
+      const s = String(detail.surface ?? "none");
+      p.screenShare = (["monitor", "window", "browser", "none", "unsupported"].includes(s) ? s : "none") as ProctoringState["screenShare"];
+      if (p.screenShare === "window" || p.screenShare === "browser") await recordIncident(row.session.id, "screen_share_partial", { surface: s });
+      break;
+    }
+    case "screen_share_lost":
+      p.screenShare = "none";
+      lockIt("Screen sharing stopped.");
+      await recordIncident(row.session.id, "screen_share_lost", detail);
+      break;
+    case "camera_lost":
+      p.cameraLost = (p.cameraLost ?? 0) + 1;
+      await recordIncident(row.session.id, "camera_lost", detail);
+      break;
+    case "devtools":
+      await recordIncident(row.session.id, "devtools", detail);
+      break;
+    default:
+      break; // focus_return, fullscreen_enter, camera_back, resize: informational
+  }
+  await saveProctoring(row.session.id, p);
+  return res.json({ room: roomStateOf({ ...row, session: { ...row.session, proctoring: p } }) });
+});
+
+// The learner puts the paper back (re-entered full screen) - allowed while
+// they have self-resumes left.
+sitRouter.post("/:id/resume", requireAuth, requireRole("learner"), async (req: AuthedRequest, res) => {
+  const row = await ownSession(req, req.params.id);
+  if (!row) return res.status(404).json({ error: "Sitting not found." });
+  const p = proctoringOf(row.session.proctoring);
+  if (!p.lockedAt) return res.json({ room: roomStateOf(row) });
+  if (p.requiresInvigilator) return res.status(423).json({ error: "Your paper is locked until your invigilator resumes it.", room: roomStateOf(row) });
+  p.lockedAt = null;
+  p.lockReason = null;
+  await saveProctoring(row.session.id, p);
+  await recordIncident(row.session.id, "resumed_by_learner", { locks: p.locks });
+  return res.json({ room: roomStateOf({ ...row, session: { ...row.session, proctoring: p } }) });
+});
+
+// Periodic captures from the room: a webcam photo or a screen still.
+sitRouter.post("/:id/capture", requireAuth, requireRole("learner"), async (req: AuthedRequest, res) => {
+  const parsed = z.object({ kind: z.enum(["photo", "screen"]), image: z.string().min(100).max(1_600_000), reason: z.string().max(60).optional() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid capture." });
+  const row = await ownSession(req, req.params.id);
+  if (!row) return res.status(404).json({ error: "Sitting not found." });
+  if (row.session.status !== "in_progress") return res.status(409).json({ error: "The paper is not open." });
+  const p = proctoringOf(row.session.proctoring);
+  const last = parsed.data.kind === "photo" ? p.lastPhotoAt : p.lastScreenAt;
+  // Throttle: scheduled captures no closer than MIN_GAP; a flagged capture may come any time.
+  if (!parsed.data.reason && last && Date.now() - new Date(last).getTime() < MIN_GAP[parsed.data.kind] * 1000) {
+    return res.status(429).json({ error: "Too soon." });
+  }
+  try {
+    const id = await storeEvidence(row.session.id, parsed.data.kind, parsed.data.image, 900 * 1024);
+    if (parsed.data.kind === "photo") { p.photos += 1; p.lastPhotoAt = new Date().toISOString(); } else { p.screens += 1; p.lastScreenAt = new Date().toISOString(); }
+    await saveProctoring(row.session.id, p);
+    return res.json({ id, counts: { photos: p.photos, screens: p.screens } });
+  } catch (err) {
+    return res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// ---- Staff: resume a locked paper, submit on the learner's behalf, extra time --------------
+
+export async function staffResume(sessionId: string, actorId: string) {
+  const [s] = await db.select().from(learnerSessions).where(eq(learnerSessions.id, sessionId));
+  if (!s) return null;
+  const p = proctoringOf(s.proctoring);
+  p.lockedAt = null;
+  p.lockReason = null;
+  p.requiresInvigilator = false;
+  p.resumedBy = [...(p.resumedBy ?? []), actorId];
+  await saveProctoring(s.id, p);
+  await recordIncident(s.id, "resumed_by_invigilator", { actionTaken: "resumed" }, actorId);
+  return p;
+}
+
+export { submitSession };

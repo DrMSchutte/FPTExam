@@ -17,7 +17,8 @@ import {
   assessorDecisions,
 } from "../db/schema.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
-import { issueCodes, codesForPrint } from "./sit.js";
+import { issueCodes, codesForPrint, staffResume } from "./sit.js";
+import { proctoringOf, submitSession, deadlineFor } from "../proctoring/session.js";
 import { checkStaffing, cohortLearners, learnerClashes, assessorLoads, assessorScopeMap, invigilatorClashes, invigilatorsNeeded, DEFAULT_MARKING_CAP } from "../scheduling/staffing.js";
 
 export const sittingsRouter = Router();
@@ -241,6 +242,10 @@ sittingsRouter.get("/:id/learners", requireAuth, requireRole("administrator", "i
       entries: learnerSessions.entries,
       reentryAllowed: learnerSessions.reentryAllowed,
       precheck: learnerSessions.precheck,
+      proctoring: learnerSessions.proctoring,
+      startedAt: learnerSessions.startedAt,
+      extraMinutes: learnerSessions.extraMinutes,
+      sealHash: learnerSessions.sealHash,
     })
     .from(learnerSessions)
     .innerJoin(users, eq(users.id, learnerSessions.learnerId))
@@ -256,9 +261,22 @@ sittingsRouter.get("/:id/learners", requireAuth, requireRole("administrator", "i
   return res.json({
     rows: rows.map((r) => {
       const p = (r.precheck ?? {}) as { consentAt?: string; identityPhotoId?: string; camera?: boolean; microphone?: boolean };
+      const pr = proctoringOf(r.proctoring);
       return {
         ...r,
         precheck: undefined,
+        proctoring: undefined,
+        startedAt: r.startedAt?.toISOString() ?? null,
+        sealHash: r.sealHash ? r.sealHash.slice(0, 16) : null,
+        locked: Boolean(pr.lockedAt),
+        requiresInvigilator: Boolean(pr.requiresInvigilator),
+        lockReason: pr.lockReason ?? null,
+        locks: pr.locks,
+        focusLosses: pr.focusLosses,
+        pasteAttempts: pr.pasteAttempts,
+        photos: pr.photos,
+        screens: pr.screens,
+        screenShare: pr.screenShare ?? null,
         idNumberMasked: r.idNumberLast4 ? `••••••••• ${r.idNumberLast4}` : null,
         idNumberLast4: undefined,
         checkInTime: r.checkInTime?.toISOString() ?? null,
@@ -685,4 +703,48 @@ sittingsRouter.post("/:id/learners/:learnerId/allow-reentry", requireAuth, requi
   if (!row) return res.status(404).json({ error: "That learner is not on this sitting." });
   await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "sitting_reentry_allowed", targetType: "session", targetId: row.id });
   return res.json({ ok: true });
+});
+
+
+// ---- Block 5b: staff actions on a live paper ------------------------------------------------
+
+async function sessionOnSitting(req: AuthedRequest, sittingId: string, learnerId: string) {
+  const sitting = await staffOnSitting(req, sittingId);
+  if (!sitting) return null;
+  const [session] = await db.select().from(learnerSessions).where(and(eq(learnerSessions.sittingId, sitting.id), eq(learnerSessions.learnerId, learnerId)));
+  return session ? { sitting, session } : null;
+}
+
+// Put a locked paper back for the learner.
+sittingsRouter.post("/:id/learners/:learnerId/resume", requireAuth, requireRole("administrator", "invigilator"), async (req: AuthedRequest, res) => {
+  const found = await sessionOnSitting(req, req.params.id, req.params.learnerId);
+  if (!found) return res.status(404).json({ error: "That learner is not on this sitting." });
+  const p = await staffResume(found.session.id, req.auth!.userId);
+  return res.json({ ok: true, locks: p?.locks ?? 0 });
+});
+
+// Extra time for one learner (an accommodation, or lost minutes after a fault).
+sittingsRouter.post("/:id/learners/:learnerId/extra-time", requireAuth, requireRole("administrator", "invigilator"), async (req: AuthedRequest, res) => {
+  const parsed = z.object({ minutes: z.number().int().min(1).max(180), reason: z.string().trim().min(3).max(300) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Give the minutes (1-180) and a reason." });
+  const found = await sessionOnSitting(req, req.params.id, req.params.learnerId);
+  if (!found) return res.status(404).json({ error: "That learner is not on this sitting." });
+  if (found.session.status === "submitted" || found.session.status === "sealed") return res.status(409).json({ error: "This paper has already been submitted." });
+  const [u] = await db.update(learnerSessions).set({ extraMinutes: found.session.extraMinutes + parsed.data.minutes }).where(eq(learnerSessions.id, found.session.id)).returning();
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "session_extra_time", targetType: "session", targetId: found.session.id, reason: `+${parsed.data.minutes} min: ${parsed.data.reason}` });
+  const [inst] = await db.select({ minutes: assessmentInstruments.timeAllocationMinutes }).from(assessmentInstruments).where(eq(assessmentInstruments.id, found.sitting.instrumentId));
+  return res.json({ ok: true, extraMinutes: u.extraMinutes, deadline: deadlineFor(u.startedAt, inst?.minutes ?? 0, u.extraMinutes, found.sitting.endTime).toISOString() });
+});
+
+// Submit the paper as it stands on the learner's behalf (learner gone, or
+// terminated for an integrity reason - recorded).
+sittingsRouter.post("/:id/learners/:learnerId/submit", requireAuth, requireRole("administrator", "invigilator"), async (req: AuthedRequest, res) => {
+  const parsed = z.object({ reason: z.string().trim().min(3).max(300) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Give a reason." });
+  const found = await sessionOnSitting(req, req.params.id, req.params.learnerId);
+  if (!found) return res.status(404).json({ error: "That learner is not on this sitting." });
+  if (found.session.status !== "in_progress") return res.status(409).json({ error: `The paper is ${found.session.status.replace("_", " ")}, not in progress.` });
+  const updated = await submitSession(found.session.id, new Date(), "invigilator", req.auth!.userId);
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "session_terminated", targetType: "session", targetId: found.session.id, reason: parsed.data.reason });
+  return res.json({ ok: true, status: updated?.status ?? "submitted", sealHash: updated?.sealHash ?? null });
 });

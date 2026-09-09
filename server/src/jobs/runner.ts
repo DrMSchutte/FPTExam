@@ -1,5 +1,6 @@
 import { and, eq, lte, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
+import { autoSubmitExpired } from "../proctoring/session.js";
 import {
   backgroundJobs,
   learnerSessions,
@@ -180,5 +181,9 @@ export function startJobRunner() {
     .catch((err) => console.error("Could not fail orphaned in-process jobs:", err));
   timer = setInterval(() => void tick(), POLL_MS);
   void tick();
+  // Block 5b: papers still open past their deadline are submitted as they stand.
+  setInterval(() => {
+    autoSubmitExpired().then((n) => { if (n) console.log(`Auto-submitted ${n} paper(s) at time-up.`); }).catch((err) => console.error("Auto-submit sweep failed:", err));
+  }, 60_000);
   console.log("Background job runner started.");
 }

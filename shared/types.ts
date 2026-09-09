@@ -151,6 +151,19 @@ export interface SittingRosterRow {
   identityPhotoId: string | null;
   camera: boolean | null;
   microphone: boolean | null;
+  // Block 5b
+  startedAt: string | null;
+  extraMinutes: number;
+  sealHash: string | null;
+  locked: boolean;
+  requiresInvigilator: boolean;
+  lockReason: string | null;
+  locks: number;
+  focusLosses: number;
+  pasteAttempts: number;
+  photos: number;
+  screens: number;
+  screenShare: string | null;
 }
 
 export interface StaffingProblem { code: string; message: string; blocking: boolean; slot?: number }

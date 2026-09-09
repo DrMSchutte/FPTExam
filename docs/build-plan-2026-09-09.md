@@ -150,8 +150,25 @@ waiting room with a countdown. The paper opens only after check-in and only insi
 window — the server enforces this for every sign-in path. A code sign-in is scoped to
 that one exam: it cannot read results or other sittings. Roster shows code issued/used,
 consent, photo, camera, and the check-in / writing / submitted state.
-*Still to come:* 5b the locked full-screen paper with captures and focus-loss detection,
-5c the invigilator console and integrity engine, 5d the Statement of Results.
+**5b — the locked paper (delivered 9 Sep 2026).** After check-in the learner presses
+*Begin*: the exam goes full screen, the camera stays on, and the browser asks for the
+**entire screen** to be shared (a window or tab is refused). One question at a time with a
+question map, answers saved as typed, the clock is the server's (time allocation from the
+moment the paper opened, plus any extra time, never past the sitting's end). Copy, cut,
+paste, the context menu, print/save shortcuts and developer-tools shortcuts are blocked
+and recorded. **Leaving the exam window, hiding the tab or leaving full screen locks the
+paper** — a dark overlay states it has been recorded and the invigilator alerted; the
+learner may return twice themselves, the third lock needs the invigilator (*Resume paper*
+on the roster). Every lock also triggers a flagged photo and screen capture. Scheduled
+captures: a webcam photo every 45 s and a screen still every 2 min (server-throttled),
+stored as evidence. Submission **seals** the paper: a SHA-256 over the answers, the
+submission time and every evidence hash in order; shown to the learner and on the roster.
+Time-up is enforced by the server (a sweep every minute submits any paper still open past
+its deadline). Roster: lock state, focus losses, paste attempts, capture counts, screen
+share scope, seal; actions *Resume paper*, *Extra time* (minutes + reason, audited),
+*Submit for them* (reason, audited). Stated limit stands: a browser detects and locks; it
+cannot physically stop the operating system switching apps.
+*Still to come:* 5c the invigilator console and integrity engine, 5d the Statement of Results.
 
 ### Block 6 — Phase E: FPTStaff connection
 *What you get:* People and cohorts pulled from FPTStaff by section; manual adds pushed

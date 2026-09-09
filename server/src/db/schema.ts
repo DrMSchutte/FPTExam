@@ -385,6 +385,12 @@ export const learnerSessions = pgTable(
     reentryAllowed: boolean("reentry_allowed").notNull().default(false),
     // {consentAt, consentVersion, deviceAt, camera, microphone, screen, userAgent, identityPhotoId, checkedInAt}
     precheck: jsonb("precheck"),
+    // Block 5b: when the paper actually opened (the clock runs from here), any
+    // extra time granted, and the live proctoring state
+    // {locks, lockedAt, lockReason, requiresInvigilator, focusLosses, pasteAttempts, photos, screens, lastPhotoAt, lastScreenAt, screenShare}
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    extraMinutes: integer("extra_minutes").notNull().default(0),
+    proctoring: jsonb("proctoring"),
   },
   (t) => ({
     uniqSittingLearner: uniqueIndex("uq_learner_sessions_sitting_learner").on(

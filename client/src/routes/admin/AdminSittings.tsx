@@ -369,6 +369,22 @@ function Roster({ sitting, cohorts, onChanged, onError }: { sitting: SittingList
     } catch (err) { onError((err as Error).message); }
   }
 
+  async function resumePaper(r: SittingRosterRow) {
+    try { await api.post(`/sittings/${sitting.id}/learners/${r.learnerId}/resume`); await onChanged(`${r.name}'s paper is unlocked.`); await load(); }
+    catch (err) { onError((err as Error).message); }
+  }
+  async function extraTime(r: SittingRosterRow) {
+    const mins = window.prompt(`Extra minutes for ${r.name}?`, "10"); if (!mins) return;
+    const reason = window.prompt("Reason (goes in the audit log):", ""); if (!reason) return;
+    try { const x = await api.post<{ extraMinutes: number }>(`/sittings/${sitting.id}/learners/${r.learnerId}/extra-time`, { minutes: Number(mins), reason }); await onChanged(`${r.name} now has ${x.extraMinutes} extra minutes.`); await load(); }
+    catch (err) { onError((err as Error).message); }
+  }
+  async function submitFor(r: SittingRosterRow) {
+    const reason = window.prompt(`Submit ${r.name}'s paper as it stands? Give the reason (goes in the audit log):`, ""); if (!reason) return;
+    try { await api.post(`/sittings/${sitting.id}/learners/${r.learnerId}/submit`, { reason }); await onChanged(`${r.name}'s paper was submitted and sealed.`); await load(); }
+    catch (err) { onError((err as Error).message); }
+  }
+
   async function removeSelected() {
     if (!selected.size) return;
     if (!window.confirm(`Take ${selected.size} student${selected.size === 1 ? "" : "s"} off this sitting? Only students who have not started can be removed.`)) return;
@@ -443,8 +459,17 @@ function Roster({ sitting, cohorts, onChanged, onError }: { sitting: SittingList
                     {r.consent && <span className="text-ink-muted"> · consent ✓</span>}
                     {r.camera === false && <span className="text-amber-700"> · no camera</span>}
                   </td>
-                  <td><Badge tone={r.sessionStatus === "scheduled" ? "gray" : r.sessionStatus === "in_progress" ? "blue" : r.sessionStatus === "checked_in" ? "teal" : "green"}>{SESSION_LABEL[r.sessionStatus] ?? r.sessionStatus}</Badge>{r.accountStatus !== "active" && r.accountStatus !== "invited" && <div className="mt-0.5"><StatusBadge status={r.accountStatus} /></div>}</td>
-                  <td className="text-right">{r.codeIssued && r.entries > 0 && !r.reentryAllowed && r.sessionStatus !== "submitted" && r.sessionStatus !== "sealed" && <button type="button" className="lnk text-[12.5px]" onClick={() => allowReentry(r)}>Allow re-entry</button>}</td>
+                  <td>
+                    <Badge tone={r.locked ? "amber" : r.sessionStatus === "scheduled" ? "gray" : r.sessionStatus === "in_progress" ? "blue" : r.sessionStatus === "checked_in" ? "teal" : "green"}>{r.locked ? (r.requiresInvigilator ? "Locked — needs you" : "Locked") : SESSION_LABEL[r.sessionStatus] ?? r.sessionStatus}</Badge>
+                    {r.sessionStatus === "in_progress" && <div className="t-sub mt-0.5">{r.focusLosses ? `${r.focusLosses} left window · ` : ""}{r.pasteAttempts ? `${r.pasteAttempts} paste · ` : ""}{r.photos} photos · {r.screens} screens{r.screenShare && r.screenShare !== "monitor" ? ` · screen: ${r.screenShare}` : ""}{r.extraMinutes ? ` · +${r.extraMinutes} min` : ""}</div>}
+                    {(r.sessionStatus === "submitted" || r.sessionStatus === "sealed") && r.sealHash && <div className="t-sub mt-0.5 font-mono">seal {r.sealHash}</div>}
+                    {r.accountStatus !== "active" && r.accountStatus !== "invited" && <div className="mt-0.5"><StatusBadge status={r.accountStatus} /></div>}
+                  </td>
+                  <td className="text-right text-[12.5px] whitespace-nowrap">
+                    {r.locked && <button type="button" className="lnk font-semibold" onClick={() => resumePaper(r)}>Resume paper</button>}
+                    {r.sessionStatus === "in_progress" && <><span className="text-ink-faint"> · </span><button type="button" className="lnk" onClick={() => extraTime(r)}>Extra time</button><span className="text-ink-faint"> · </span><button type="button" className="lnk" onClick={() => submitFor(r)}>Submit for them</button></>}
+                    {r.codeIssued && r.entries > 0 && !r.reentryAllowed && r.sessionStatus !== "submitted" && r.sessionStatus !== "sealed" && <><span className="text-ink-faint"> · </span><button type="button" className="lnk" onClick={() => allowReentry(r)}>Allow re-entry</button></>}
+                  </td>
                 </tr>
               ))}
             </tbody>

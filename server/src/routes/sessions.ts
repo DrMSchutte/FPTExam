@@ -4,7 +4,7 @@ import { eq, and } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { learnerSessions, examSittings, assessmentInstruments } from "../db/schema.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
-import { enqueueJob } from "../jobs/runner.js";
+import { proctoringOf, deadlineFor, submitSession } from "../proctoring/session.js";
 
 export const sessionsRouter = Router();
 
@@ -71,7 +71,7 @@ sessionsRouter.post("/sessions/:id/start", requireAuth, requireRole("learner"), 
   if (sitting && now >= sitting.endTime.getTime()) return res.status(403).json({ error: "The sitting has ended." });
   const [updated] = await db
     .update(learnerSessions)
-    .set({ status: "in_progress", checkInTime: session.checkInTime ?? new Date() })
+    .set({ status: "in_progress", checkInTime: session.checkInTime ?? new Date(), startedAt: new Date() })
     .where(eq(learnerSessions.id, session.id))
     .returning();
   return res.json(updated);
@@ -100,11 +100,18 @@ sessionsRouter.get("/sessions/:id/paper", requireAuth, requireRole("learner"), a
     options: q.options,
   }));
 
+  const p = proctoringOf(session.proctoring);
   return res.json({
     timeAllocationMinutes: instrument.timeAllocationMinutes,
     permittedMaterials: instrument.permittedMaterials,
     questions,
     existingAnswers: session.answers ?? {},
+    startedAt: session.startedAt?.toISOString() ?? null,
+    deadline: deadlineFor(session.startedAt, instrument.timeAllocationMinutes, session.extraMinutes, sitting.endTime).toISOString(),
+    serverTime: new Date().toISOString(),
+    locked: Boolean(p.lockedAt),
+    requiresInvigilator: Boolean(p.requiresInvigilator),
+    status: session.status,
   });
 });
 
@@ -124,6 +131,9 @@ sessionsRouter.post("/sessions/:id/answers", requireAuth, requireRole("learner")
   if (session.status !== "in_progress") {
     return res.status(400).json({ error: `Cannot save answers for a session in status '${session.status}'.` });
   }
+  if (proctoringOf(session.proctoring).requiresInvigilator) {
+    return res.status(423).json({ error: "Your paper is locked until your invigilator resumes it." });
+  }
   const merged = { ...(session.answers as Record<string, unknown> | null ?? {}), ...parsed.data.answers };
   const [updated] = await db
     .update(learnerSessions)
@@ -139,16 +149,13 @@ sessionsRouter.post("/sessions/:id/answers", requireAuth, requireRole("learner")
 sessionsRouter.post("/sessions/:id/submit", requireAuth, requireRole("learner"), async (req: AuthedRequest, res) => {
   const session = await loadOwnedSession(req.params.id, req.auth!.userId, req.auth!.sittingSession);
   if (!session) return res.status(404).json({ error: "Session not found." });
+  if (session.status === "submitted" || session.status === "sealed") return res.json(session); // idempotent
   if (session.status !== "in_progress") {
     return res.status(400).json({ error: `Cannot submit a session in status '${session.status}'.` });
   }
-  const [updated] = await db
-    .update(learnerSessions)
-    .set({ status: "submitted", submissionTime: new Date() })
-    .where(eq(learnerSessions.id, session.id))
-    .returning();
-  // Kick off the AI Response-Review for the Assessor (build brief §5.4). It
-  // runs in the background worker; the Assessor's dossier shows its progress.
-  await enqueueJob("ai_response_review", { sessionId: session.id });
-  return res.json(updated);
+  // Block 5b: submission seals the answers with every piece of evidence
+  // captured during the sitting (proctoring/session.ts), then the AI
+  // Response-Review starts for the Assessor.
+  const updated = await submitSession(session.id, new Date(), "learner");
+  return res.json(updated ?? session);
 });

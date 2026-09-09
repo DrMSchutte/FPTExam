@@ -106,7 +106,7 @@ export default function SitCheckIn() {
 
         {state && step === 1 && <ConsentStep state={state} onDone={setState} onError={setError} />}
         {state && step === 2 && <CameraStep state={state} onDone={setState} onError={setError} />}
-        {state && step === 3 && <ReadyStep state={state} onState={setState} onError={setError} onStart={() => navigate(`/learner?open=${state.sessionId}`)} />}
+        {state && step === 3 && <ReadyStep state={state} onState={setState} onError={setError} onStart={() => navigate(`/sit/room/${state.sessionId}`)} />}
 
         <p className="t-sub mt-6 text-center">© {new Date().getFullYear()} FPT Academy. All rights reserved.</p>
       </div>
@@ -285,6 +285,8 @@ function ReadyStep({ state, onState, onError, onStart }: { state: SitState; onSt
       onStart();
     } catch (err) { onError((err as Error).message); } finally { setBusy(false); }
   }
+  // Already writing (re-entry after a drop-out): straight back to the room.
+  useEffect(() => { if (state.status === "in_progress") onStart(); }, [state.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="rounded-xl border border-line bg-surface shadow-card">

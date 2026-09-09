@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import Login from "./routes/Login";
 import AccountSetup from "./routes/AccountSetup";
 import SitCheckIn from "./routes/SitCheckIn";
+import ExamRoom from "./routes/ExamRoom";
 import SittingCodesPrint from "./routes/admin/SittingCodesPrint";
 import { ProtectedRoute } from "./lib/ProtectedRoute";
 import { useAuth } from "./lib/auth";
@@ -42,6 +43,14 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/setup/:token" element={<AccountSetup />} />
       <Route path="/sit" element={<SitCheckIn />} />
+      <Route
+        path="/sit/room/:id"
+        element={
+          <ProtectedRoute allow={["learner"]}>
+            <ExamRoom />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/print/sittings/:id/codes"
         element={
