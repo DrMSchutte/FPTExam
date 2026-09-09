@@ -155,7 +155,7 @@ Model answer / rubric: ${q.modelAnswerOrRubric ?? "(none)"}`
 
   return `You are an assessment moderator working to QCTO standards, checking whether a ${label} assessment paper for "${input.qualificationTitle}" (${input.nqfLevel ? `NQF Level ${input.nqfLevel}` : "NQF level not recorded"}) meets the full requirement of the assessment standard.
 
-The paper is sat as a proctored, closed-book examination in one timed session on a locked screen: no internet, no sources, no files or uploads, no workplace or interview tasks, nothing done over days. Any question that cannot be fully answered there and then, in writing, from the learner's own knowledge plus what the question supplies, is an assignment task rather than an exam question - report it as a critical questionIssue.
+The paper is sat as a proctored, closed-book examination in one timed session on a locked screen, and every answer is TYPED TEXT in an answer box: no internet, no sources, no files or uploads, no workplace or interview tasks, nothing done over days, and nothing drawn, sketched or plotted (a chart, diagram, organogram or graph cannot be produced in a text box - ask the learner to describe or list it instead). Any question that cannot be fully answered there and then, typed, from the learner's own knowledge plus what the question supplies, is not an exam question - report it as a critical questionIssue.
 
 The standard means: every registered Exit Level Outcome AND every Associated Assessment Criterion is assessed by at least one question that genuinely evidences it; the cognitive demand (revised Bloom's taxonomy) matches the NQF level - competence is shown by application, analysis and evaluation, not recall alone; each question has a rubric an assessor can mark consistently; marks are weighted in proportion to importance; the paper is answerable in the time.
 
@@ -282,6 +282,8 @@ const ASSIGNMENT_PATTERNS: [RegExp, string][] = [
   [/\b(use|search|consult|browse|visit|refer to)\b[^.]{0,30}\b(internet|online sources|websites?|web|library|textbooks?|google)\b/i, "use the internet or other sources"],
   [/\bover (the next|a period of|the coming) (\d+|few|several|two|three|four) (days?|weeks?|months?)\b|\bwithin (\d+|two|three|four) (weeks?|days?) of\b/i, "work over days or weeks"],
   [/\b(record|film|video) (yourself|a demonstration)\b|\btake (a )?photographs?\b/i, "make a recording or photographs"],
+  // The answer box is typed text: nothing can be drawn, sketched or plotted.
+  [/\b(draw|sketch|plot|illustrate|construct|design)\b[^.]{0,40}\b(chart|diagram|flow ?chart|organogram|organisational structure|mind ?map|graph|drawing|sketch|flow diagram|process map|layout)\b/i, "draw a chart or diagram"],
 ];
 
 function looksLikeAssignmentTask(q: { type: string; prompt: string }): boolean {
