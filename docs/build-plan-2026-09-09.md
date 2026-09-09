@@ -1,0 +1,110 @@
+# FPT Exam — Build plan from 9 September 2026
+
+Agreed between Melanie Schutte (FPT Academy) and Claude on 9 Sep 2026. This is the order
+of work from here. It follows `restructure-2026-09-05.md` (the rules) and replaces the
+"Order of work" list at the end of that document.
+
+## Standing rules (already decided — every block below respects them)
+
+1. **Four routes into an assessment.** QCTO FISA/EISA papers only from Curricula Builder;
+   legacy FISA drafted from SAQA; non-QCTO assessments built here; other Curricula Builder
+   courses linked in. Never a QCTO paper built on FPT Exam.
+2. **Every sitting is proctored** to the QCTO requirement. No modes.
+3. **The standard check is the gate.** Coverage of every outcome and criterion, Bloom's
+   demand against the NQF band, rubric quality, time. Blocked papers are fixed (AI or by
+   hand), or overridden with an audited reason.
+4. **AI assesses, assessor endorses.** The assessor's sign-off is the only release event.
+   Moderation and verification run in FPTStaff unless decided otherwise (open decision 2).
+5. **Data minimisation.** FPT Exam holds what an exam needs. Learner ID number and student
+   number are stored encrypted, masked on screen, printed in full only on the Statement of
+   Results. Proctoring evidence is kept 12 months then deleted (hold flag for appeals).
+6. **The Administrator never handles a password.** People get a one-use set-up link.
+7. **FPTStaff is the system of record for people; Curricula Builder for QCTO papers.**
+   Until they are connected, FPT Exam captures locally and syncs later.
+8. **Delivery is by GitHub → Replit.** Push origin, Pull, Run. No Shell steps.
+
+## The blocks, in order
+
+### Block 1 — People at scale
+*What you get:* Register People becomes tabs — **Students · Assessors & Moderators ·
+Invigilators** (Administrators behind a fourth) — each with the columns that matter for
+that type. Instant search (name, email, student number, ID last four), filters
+(qualification, cohort, status, sitting), server-side paging and sorting so tens of
+thousands of rows behave like twenty. Account status you can see: Invited · Active ·
+Suspended · Archived, with "chase all unused set-up links" in one click. A person page
+per user (sittings, results, marking done, set-up status). Bulk import from CSV/XLSX with
+a downloadable template and a preview of what will be created / updated / rejected
+before anything is saved. Student number and ID number captured on students (encrypted).
+*Done when:* 20 000 test students load in under a second per page; import of 500 rows
+with duplicates and errors previews correctly and imports clean rows only; every list
+exports to CSV.
+
+### Block 2 — Cohorts
+*What you get:* Cohorts as the unit of work (e.g. *ND Payroll · Durban · Jan 2026
+intake*): create, import, move students between them, and allocate a whole cohort to a
+sitting. Cohort page with its students, sittings and results. Ready for FPTStaff to own
+cohorts when connected.
+*Done when:* a 300-student cohort is allocated to a sitting in one action and appears in
+the invigilator's roster.
+
+### Block 3 — Scheduling at scale
+*What you get:* **Sitting series** — one paper, many rooms/dates — with capacity per
+sitting and automatic split of a cohort across sittings. Month calendar view. Assessor
+allocation that checks registration scope (only qualifications they are registered to
+assess), balances marking load against each assessor's cap, and a **marking workload
+board** (waiting, average turnaround, overdue). Invigilator allocation that enforces the
+ratio you set (e.g. 1:30) and the independence rule. Clash check for double-booking.
+*Done when:* a series of 6 sittings for 900 learners is created and staffed in under ten
+minutes with no manual counting.
+
+### Block 4 — Moderator role (if moderation comes to FPT Exam — open decision 2)
+*What you get:* Moderator as a fifth role with its own queue: sampling of signed-off
+scripts by rule (e.g. 10% or at least 5, all borderline, all fails), moderation record
+per script (confirmed / adjusted / referred), and moderation status on Results. If
+moderation stays in FPTStaff, this block is skipped and the result push (Block 6) carries
+what FPTStaff needs.
+
+### Block 5 — Phase D: proctoring and the exam experience
+*What you get:* Mapping of QCTO/AQP proctoring requirements to features (from public
+QCTO policy; FPT's own documents if supplied). Learner **one-time sitting codes** instead
+of passwords for the exam itself. Pre-checks (camera, microphone, screen, identity photo
+against the registration photo), consent text with the retention window, capture loop
+(periodic photo, screen, tab-switch and paste detection, focus loss), tamper-evident
+**seal hash** on submission, **Invigilator console** (live roster, flags, chat, pause /
+resume / terminate with reason), **Integrity engine** (flags → incident log → integrity
+summary on the dossier), evidence storage with the 12-month sweep and hold flag.
+**Statement of Results** — branded PDF for the learner with ID number, student number,
+sitting details, integrity summary, assessor sign-off — and the result-released email.
+Assessor email notifications (scripts waiting).
+*Done when:* a full sitting runs end to end with a proctored learner, an invigilator
+watching, an assessor signing off and the learner downloading their Statement.
+
+### Block 6 — Phase E: FPTStaff connection
+*What you get:* People and cohorts pulled from FPTStaff by section; manual adds pushed
+back with duplicate guard; results and Statements pushed on sign-off; moderation /
+verification / certification stay in FPTStaff. Contract written for the FPTStaff side.
+
+### Block 7 — Phase F: Curricula Builder connection live
+*What you get:* the two Curricula Builder routes become usable — released QCTO papers
+and other courses listed and pulled in. The contract is already written
+(`curricula-builder-contract.md`); Curricula Builder has to expose it.
+
+## Open decisions (yours)
+
+1. **Student number format** — e.g. `FPT-2026-00123`. Needed for Block 1 validation.
+2. **Moderators** — inside FPT Exam (Block 4 built) or in FPTStaff (Block 4 skipped)?
+3. **Email** — set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` in the
+   Repl's Secrets so set-up links and, later, notifications send automatically.
+4. **Curricula Builder side** — who implements the export contract (Jacques?) and when.
+5. **QCTO / AQP proctoring documents** — attach FPT's copies if you want Block 5 mapped
+   against them rather than the public policy alone.
+6. **Invigilator ratio and assessor marking cap** — defaults 1:30 and 60 scripts in
+   flight unless you say otherwise.
+
+## How each block is delivered
+
+One or two commits per block, each verified end to end with real AI before it leaves
+here (API tests, browser walk-through, Phase C marking regression), then merged into your
+FPTExam folder for **Push origin → Pull → Run**. Each delivery note says what changed
+and what to click. The restructure document and this plan are updated as decisions land;
+both live in the repo under `docs/` and in the Claude project.

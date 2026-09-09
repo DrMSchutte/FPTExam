@@ -119,16 +119,6 @@ release event. Moderation/verification: FPTStaff.
 
 ## 5. Order of work
 
-1. This restructure (sidebar, intake with upload + extraction, authoring disabled,
-   standard-check gate, Results page, AI pre-fill in the dossier, assessor queue badge). Done.
-2. Four-route Set up an Assessment (this addendum): route chooser, per-route authoring
-   gate, Curricula Builder pull contract with a "not connected yet" state until Curricula
-   Builder exposes it.
-3. Phase D — proctoring (pre-checks, consent, capture loop, seal/hash, Invigilator
-   console, Integrity engine, R2, retention sweep), learner one-time sitting codes,
-   assessor email notifications, **Statement of Results** (branded PDF for the learner with
-   ID number + student number, sitting details, integrity summary, assessor sign-off; also
-   sent to FPTStaff with the result) and the result-released email to the learner.
-4. Phase E — FPTStaff connection (people pull/push, result push delivery).
-5. Phase F — Curricula Builder connection live (the QCTO and "other courses" routes
-   become usable; until then no QCTO paper can enter FPT Exam, by design).
+Superseded on 9 Sep 2026 by `build-plan-2026-09-09.md` (seven blocks: people at scale,
+cohorts, scheduling at scale, moderator role if needed, Phase D proctoring + Statement of
+Results, Phase E FPTStaff, Phase F Curricula Builder live).
