@@ -4,7 +4,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { users, userRoles, auditLog } from "../db/schema.js";
 import { verifyPassword, hashPassword } from "../auth/password.js";
-import { verifyMfaToken, buildMfaOtpAuthUrl } from "../auth/mfa.js";
+import { verifyMfaToken, buildMfaOtpAuthUrl, mfaEnforced } from "../auth/mfa.js";
 import { findLiveSetupToken, markSetupTokenUsed } from "../auth/setupLinks.js";
 import { issueSessionToken, issuePendingMfaToken, verifyPendingMfaToken } from "../auth/jwt.js";
 import type { UserRole } from "../types.js";
@@ -58,7 +58,7 @@ authRouter.post("/login", async (req, res) => {
     await db.update(users).set({ status: "active", activatedAt: row.activatedAt ?? new Date() }).where(eq(users.id, row.id));
   }
 
-  if (row.mfaSecret) {
+  if (row.mfaSecret && mfaEnforced()) {
     const pendingToken = issuePendingMfaToken(row.id);
     return res.json({ mfaRequired: true, pendingToken });
   }
@@ -123,7 +123,7 @@ authRouter.get("/setup/:token", async (req, res) => {
     name: live.user.name,
     email: live.user.email,
     roles: roleRows.map((r) => r.role),
-    mfaOtpAuthUrl: live.user.mfaSecret ? buildMfaOtpAuthUrl(live.user.email, live.user.mfaSecret) : null,
+    mfaOtpAuthUrl: live.user.mfaSecret && mfaEnforced() ? buildMfaOtpAuthUrl(live.user.email, live.user.mfaSecret) : null,
     expiresAt: live.token.expiresAt.toISOString(),
   });
 });
@@ -140,7 +140,7 @@ authRouter.post("/setup/:token", async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: "Invalid request body.", detail: parsed.error.issues.map((i) => i.message).join(" ") });
   const live = await findLiveSetupToken(req.params.token);
   if (!live || live.user.status === "suspended" || live.user.status === "archived") return res.status(404).json({ error: "This set-up link is not valid any more.", detail: "Ask the Administrator to send a new one." });
-  if (live.user.mfaSecret) {
+  if (live.user.mfaSecret && mfaEnforced()) {
     if (!parsed.data.mfaCode) return res.status(400).json({ error: "Enter the 6-digit code from your authenticator app to confirm it is set up." });
     if (!verifyMfaToken(parsed.data.mfaCode, live.user.mfaSecret)) return res.status(400).json({ error: "That code is not right. Check the app shows FPT Exam and try the current code." });
   }

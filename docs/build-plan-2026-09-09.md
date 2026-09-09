@@ -19,6 +19,9 @@ of work from here. It follows `restructure-2026-09-05.md` (the rules) and replac
    number are stored encrypted, masked on screen, printed in full only on the Statement of
    Results. Proctoring evidence is kept 12 months then deleted (hold flag for appeals).
 6. **The Administrator never handles a password.** People get a one-use set-up link.
+   Two-step (authenticator) sign-in is switched OFF during the build (no `MFA_REQUIRED`
+   secret); it is switched on with `MFA_REQUIRED=yes` before real sittings, when every
+   supervisory account enrols through a set-up link.
 7. **FPTStaff is the system of record for people; Curricula Builder for QCTO papers.**
    Until they are connected, FPT Exam captures locally and syncs later.
 8. **Delivery is by GitHub → Replit.** Push origin, Pull, Run. No Shell steps.
