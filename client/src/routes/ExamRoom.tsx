@@ -26,6 +26,8 @@ interface RoomState {
   cadence: { photoEverySeconds: number; screenEverySeconds: number };
   counts: { photos: number; screens: number; focusLosses: number; pasteAttempts: number };
   sealHash: string | null;
+  notes: { id: string; text: string; at: string }[];
+  captureRequested: boolean;
 }
 interface RoomResponse { room: RoomState; learner: { name: string }; sitting: { name: string; qualificationTitle: string; paper: string; minutes: number; permittedMaterials: string[] } }
 type Paper = PaperResponse & { deadline: string; serverTime: string; startedAt: string | null; locked: boolean; requiresInvigilator: boolean; status: string };
@@ -124,7 +126,8 @@ export default function ExamRoom() {
     if (phase !== "writing" || !room) return;
     const p = setInterval(() => snap("photo"), room.cadence.photoEverySeconds * 1000);
     const s = setInterval(() => snap("screen"), room.cadence.screenEverySeconds * 1000);
-    const poll = setInterval(() => id && api.get<RoomResponse>(`/sit/${id}/room`).then((r) => { setRoom(r.room); if (r.room.status !== "in_progress") setPhase("submitted"); }).catch(() => {}), 15000);
+    // Every 5 s: the clock, lock state, messages from the invigilator, capture requests - and the console's heartbeat.
+    const poll = setInterval(() => id && api.get<RoomResponse>(`/sit/${id}/room`).then((r) => { setRoom(r.room); if (r.room.status !== "in_progress") setPhase("submitted"); }).catch(() => {}), 5000);
     const first = setTimeout(() => { snap("photo"); snap("screen"); }, 3000);
     return () => { clearInterval(p); clearInterval(s); clearInterval(poll); clearTimeout(first); };
   }, [phase, room?.cadence.photoEverySeconds, room?.cadence.screenEverySeconds, snap, id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -139,6 +142,11 @@ export default function ExamRoom() {
 
   // A flagged capture whenever the paper locks.
   useEffect(() => { if (room?.locked && phase === "writing") { snap("photo", "lock"); snap("screen", "lock"); } }, [room?.locked, phase, snap]);
+  // The invigilator asked for a capture now.
+  useEffect(() => { if (room?.captureRequested && phase === "writing") { snap("photo", "requested"); snap("screen", "requested"); } }, [room?.captureRequested, phase, snap]);
+  // A message from the invigilator: shown until the learner dismisses it.
+  const note = room?.notes?.[0] ?? null;
+  function dismissNote() { if (note) { sendEvent("note_seen", { id: note.id }); setRoom((r) => (r ? { ...r, notes: r.notes.filter((n) => n.id !== note.id) } : r)); } }
 
   // ---- begin: full screen + camera + screen share, then the paper ----
   async function begin() {
@@ -355,6 +363,18 @@ export default function ExamRoom() {
       {/* hidden media */}
       <video ref={videoRef} playsInline muted className="hidden" /><video ref={screenVideoRef} playsInline muted className="hidden" />
 
+      {/* message from the invigilator */}
+      {note && !room.locked && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-40 w-[min(560px,92vw)] rounded-xl border-2 border-blue-300 bg-blue-50 shadow-card p-4 flex items-start gap-3">
+          <div className="h-9 w-9 rounded-full bg-[#2E86AB] text-white grid place-items-center font-black shrink-0">i</div>
+          <div className="flex-1 text-[14px]">
+            <div className="font-display font-bold text-blue-900">Message from your invigilator</div>
+            <p className="text-blue-900/90 mt-0.5 whitespace-pre-wrap">{note.text}</p>
+          </div>
+          <button type="button" className="btn btn-sm" onClick={dismissNote}>OK</button>
+        </div>
+      )}
+
       {/* lock overlay */}
       {room.locked && (
         <div className="fixed inset-0 z-50 bg-[#1B2A22]/95 text-white grid place-items-center p-8">
@@ -362,6 +382,13 @@ export default function ExamRoom() {
             <div className="mx-auto h-14 w-14 rounded-full bg-amber-400 text-[#1B2A22] grid place-items-center text-2xl font-black">!</div>
             <h2 className="font-display text-2xl font-extrabold">Your paper is locked</h2>
             <p className="text-white/80">{room.lockReason ?? "You left the exam."} This has been recorded and your invigilator has been alerted. Your clock keeps running.</p>
+            {note && (
+              <div className="rounded-lg bg-white text-[#1B2A22] px-4 py-3 text-left text-[14px] flex items-start gap-3">
+                <div className="h-8 w-8 rounded-full bg-[#2E86AB] text-white grid place-items-center font-black shrink-0">i</div>
+                <div className="flex-1"><div className="font-bold">Message from your invigilator</div><p className="whitespace-pre-wrap">{note.text}</p></div>
+                <button type="button" className="btn btn-sm" onClick={dismissNote}>OK</button>
+              </div>
+            )}
             {room.requiresInvigilator ? (
               <p className="rounded-lg bg-white/10 px-4 py-3 text-[14px]">You have left the exam {room.locks} times. Only your invigilator can put your paper back now — stay at your desk and wait. This screen updates by itself.</p>
             ) : (

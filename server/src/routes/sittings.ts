@@ -15,10 +15,13 @@ import {
   auditLog,
   sittingSeries,
   assessorDecisions,
+  evidenceBlobs,
+  incidentLog,
 } from "../db/schema.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
-import { issueCodes, codesForPrint, staffResume } from "./sit.js";
-import { proctoringOf, submitSession, deadlineFor } from "../proctoring/session.js";
+import { issueCodes, codesForPrint, staffResume, staffNote, staffRequestCapture, staffIncident } from "./sit.js";
+import { proctoringOf, submitSession, deadlineFor, recordIncident, captureRequestPending } from "../proctoring/session.js";
+import { MANUAL_INCIDENTS, evidenceTimeline, integrityReportFor } from "../proctoring/integrity.js";
 import { checkStaffing, cohortLearners, learnerClashes, assessorLoads, assessorScopeMap, invigilatorClashes, invigilatorsNeeded, DEFAULT_MARKING_CAP } from "../scheduling/staffing.js";
 
 export const sittingsRouter = Router();
@@ -744,7 +747,240 @@ sittingsRouter.post("/:id/learners/:learnerId/submit", requireAuth, requireRole(
   const found = await sessionOnSitting(req, req.params.id, req.params.learnerId);
   if (!found) return res.status(404).json({ error: "That learner is not on this sitting." });
   if (found.session.status !== "in_progress") return res.status(409).json({ error: `The paper is ${found.session.status.replace("_", " ")}, not in progress.` });
+  await recordIncident(found.session.id, "ended_by_invigilator", { actionTaken: parsed.data.reason }, req.auth!.userId);
   const updated = await submitSession(found.session.id, new Date(), "invigilator", req.auth!.userId);
   await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "session_terminated", targetType: "session", targetId: found.session.id, reason: parsed.data.reason });
   return res.json({ ok: true, status: updated?.status ?? "submitted", sealHash: updated?.sealHash ?? null });
+});
+
+
+// ---- Block 5c: the invigilator console --------------------------------------------------------
+//
+//   GET  /sittings/mine                                  the caller's sittings (invigilator / assessor / admin: all)
+//   GET  /sittings/:id/live                              everything the console shows, polled every few seconds
+//   POST /sittings/:id/learners/:learnerId/note          a message shown once on the learner's screen
+//   POST /sittings/:id/learners/:learnerId/request-capture
+//   POST /sittings/:id/learners/:learnerId/incident      an observation by the invigilator (+ optional warning note)
+//   GET  /sittings/:id/learners/:learnerId/evidence      the evidence timeline (also the assessor of record)
+
+const NO_SIGNAL_S = 60; // an open paper silent this long is shown as "no signal"
+
+sittingsRouter.get("/mine", requireAuth, requireRole("administrator", "invigilator", "assessor"), async (req: AuthedRequest, res) => {
+  const me = req.auth!.userId;
+  const admin = req.auth!.roles.includes("administrator");
+  const since = new Date(Date.now() - 36 * 3600000); // yesterday's sittings stay listed for a day
+  const rows = await db
+    .select({
+      sitting: examSittings,
+      qualificationTitle: qualifications.title,
+      paper: assessmentInstruments.version,
+      minutes: assessmentInstruments.timeAllocationMinutes,
+      learners: sql<number>`(SELECT count(*)::int FROM ${learnerSessions} ls WHERE ls.sitting_id = ${examSittings.id})`,
+      checkedIn: sql<number>`(SELECT count(*)::int FROM ${learnerSessions} ls WHERE ls.sitting_id = ${examSittings.id} AND ls.status = 'checked_in')`,
+      writing: sql<number>`(SELECT count(*)::int FROM ${learnerSessions} ls WHERE ls.sitting_id = ${examSittings.id} AND ls.status = 'in_progress')`,
+      locked: sql<number>`(SELECT count(*)::int FROM ${learnerSessions} ls WHERE ls.sitting_id = ${examSittings.id} AND ls.status = 'in_progress' AND (ls.proctoring->>'lockedAt') IS NOT NULL)`,
+      submitted: sql<number>`(SELECT count(*)::int FROM ${learnerSessions} ls WHERE ls.sitting_id = ${examSittings.id} AND ls.status IN ('submitted','sealed'))`,
+      invigilators: sql<number>`(SELECT count(*)::int FROM ${sittingInvigilators} si WHERE si.sitting_id = ${examSittings.id})`,
+      mine: admin ? sql<boolean>`true` : sql<boolean>`(${examSittings.assignedAssessorId} = ${me} OR EXISTS (SELECT 1 FROM ${sittingInvigilators} si WHERE si.sitting_id = ${examSittings.id} AND si.invigilator_id = ${me}))`,
+    })
+    .from(examSittings)
+    .innerJoin(qualifications, eq(qualifications.id, examSittings.qualificationId))
+    .innerJoin(assessmentInstruments, eq(assessmentInstruments.id, examSittings.instrumentId))
+    .where(admin ? sql`${examSittings.endTime} > ${since}` : sql`${examSittings.endTime} > ${since} AND (${examSittings.assignedAssessorId} = ${me} OR EXISTS (SELECT 1 FROM ${sittingInvigilators} si WHERE si.sitting_id = ${examSittings.id} AND si.invigilator_id = ${me}))`)
+    .orderBy(asc(examSittings.startTime))
+    .limit(500);
+  const now = Date.now();
+  return res.json(
+    rows.map((r) => ({
+      id: r.sitting.id,
+      name: r.sitting.name ?? `${r.qualificationTitle} · ${r.paper}`,
+      qualificationTitle: r.qualificationTitle,
+      paper: r.paper,
+      minutes: r.minutes,
+      venue: r.sitting.venue,
+      startTime: r.sitting.startTime.toISOString(),
+      endTime: r.sitting.endTime.toISOString(),
+      phase: now < r.sitting.startTime.getTime() - 45 * 60000 ? "upcoming" : now < r.sitting.startTime.getTime() ? "check_in" : now < r.sitting.endTime.getTime() ? "live" : "ended",
+      learners: r.learners,
+      checkedIn: r.checkedIn,
+      writing: r.writing,
+      locked: r.locked,
+      submitted: r.submitted,
+      invigilators: r.invigilators,
+      role: admin ? "administrator" : r.sitting.assignedAssessorId === me ? "assessor" : "invigilator",
+    }))
+  );
+});
+
+async function staffOrAssessorOnSitting(req: AuthedRequest, sittingId: string) {
+  const sitting = await staffOnSitting(req, sittingId);
+  if (sitting) return sitting;
+  const [s] = await db.select().from(examSittings).where(eq(examSittings.id, sittingId));
+  return s && s.assignedAssessorId === req.auth!.userId ? s : null;
+}
+
+sittingsRouter.get("/:id/live", requireAuth, requireRole("administrator", "invigilator", "assessor"), async (req: AuthedRequest, res) => {
+  const sitting = await staffOrAssessorOnSitting(req, req.params.id);
+  if (!sitting) return res.status(404).json({ error: "Sitting not found." });
+  const [meta] = await db
+    .select({ qualificationTitle: qualifications.title, paper: assessmentInstruments.version, minutes: assessmentInstruments.timeAllocationMinutes, questions: assessmentInstruments.questions })
+    .from(examSittings)
+    .innerJoin(qualifications, eq(qualifications.id, examSittings.qualificationId))
+    .innerJoin(assessmentInstruments, eq(assessmentInstruments.id, examSittings.instrumentId))
+    .where(eq(examSittings.id, sitting.id));
+  const questionCount = Array.isArray(meta?.questions) ? (meta!.questions as unknown[]).length : 0;
+  const rows = await db
+    .select({ session: learnerSessions, name: users.name, studentNumber: users.studentNumber, idNumberLast4: users.idNumberLast4 })
+    .from(learnerSessions)
+    .innerJoin(users, eq(users.id, learnerSessions.learnerId))
+    .where(eq(learnerSessions.sittingId, sitting.id))
+    .orderBy(asc(users.name))
+    .limit(1000);
+  const ids = rows.map((r) => r.session.id);
+  // Latest photo and screen per session, in one query.
+  const latest = ids.length
+    ? await db
+        .selectDistinctOn([evidenceBlobs.sessionId, evidenceBlobs.kind], { sessionId: evidenceBlobs.sessionId, kind: evidenceBlobs.kind, id: evidenceBlobs.id })
+        .from(evidenceBlobs)
+        .where(and(inArray(evidenceBlobs.sessionId, ids), inArray(evidenceBlobs.kind, ["photo", "screen"])))
+        .orderBy(evidenceBlobs.sessionId, evidenceBlobs.kind, desc(evidenceBlobs.createdAt))
+    : [];
+  const latestMap = new Map<string, { photo?: string; screen?: string }>();
+  for (const l of latest) {
+    const m = latestMap.get(l.sessionId) ?? {};
+    if (l.kind === "photo") m.photo = l.id; else m.screen = l.id;
+    latestMap.set(l.sessionId, m);
+  }
+  // Incidents: counts per session and the latest 40 for the alerts strip.
+  const incidentRows = ids.length
+    ? await db.select({ i: incidentLog, byName: users.name }).from(incidentLog).leftJoin(users, eq(users.id, incidentLog.raisedByUserId)).where(inArray(incidentLog.sessionId, ids)).orderBy(desc(incidentLog.occurredAt)).limit(400)
+    : [];
+  const incidentCount = new Map<string, number>();
+  for (const { i } of incidentRows) incidentCount.set(i.sessionId, (incidentCount.get(i.sessionId) ?? 0) + 1);
+  const nameOf = new Map(rows.map((r) => [r.session.id, r.name]));
+  const learnerOf = new Map(rows.map((r) => [r.session.id, r.session.learnerId]));
+  const now = Date.now();
+  const learners = rows.map((r) => {
+    const s = r.session;
+    const p = proctoringOf(s.proctoring);
+    const pre = (s.precheck ?? {}) as { identityPhotoId?: string; camera?: boolean };
+    const deadline = deadlineFor(s.startedAt, meta?.minutes ?? 0, s.extraMinutes, sitting.endTime);
+    const lastSeen = p.lastSeenAt ? new Date(p.lastSeenAt).getTime() : null;
+    const noSignal = s.status === "in_progress" && (!lastSeen || now - lastSeen > NO_SIGNAL_S * 1000);
+    const answered = s.answers && typeof s.answers === "object" ? Object.values(s.answers as Record<string, unknown>).filter((v) => typeof v === "string" && v.trim() !== "").length : 0;
+    // Attention: red = needs the invigilator now; amber = worth a look; none otherwise.
+    let attention: "red" | "amber" | null = null;
+    const reasons: string[] = [];
+    if (s.status === "in_progress") {
+      if (p.requiresInvigilator) { attention = "red"; reasons.push("locked — needs you"); }
+      else if (p.lockedAt) { attention = attention ?? "amber"; reasons.push("locked"); }
+      if (noSignal) { attention = "red"; reasons.push("no signal"); }
+      if (p.screenShare && p.screenShare !== "monitor") { attention = attention ?? "amber"; reasons.push(p.screenShare === "none" || p.screenShare === "unsupported" ? "screen not shared" : `sharing a ${p.screenShare}`); }
+      if (p.pasteAttempts) { attention = attention ?? "amber"; reasons.push(`${p.pasteAttempts} paste`); }
+      if (p.focusLosses + p.fullscreenExits >= 2) { attention = attention ?? "amber"; reasons.push(`left window ${p.focusLosses + p.fullscreenExits}×`); }
+      if ((p.cameraLost ?? 0) > 0) { attention = attention ?? "amber"; reasons.push("camera dropped"); }
+    }
+    return {
+      sessionId: s.id,
+      learnerId: s.learnerId,
+      name: r.name,
+      studentNumber: r.studentNumber,
+      idNumberMasked: r.idNumberLast4 ? `••••••••• ${r.idNumberLast4}` : null,
+      status: s.status,
+      checkInTime: s.checkInTime?.toISOString() ?? null,
+      startedAt: s.startedAt?.toISOString() ?? null,
+      submissionTime: s.submissionTime?.toISOString() ?? null,
+      deadline: s.status === "in_progress" ? deadline.toISOString() : null,
+      extraMinutes: s.extraMinutes,
+      entries: s.entries,
+      reentryAllowed: s.reentryAllowed,
+      codeIssued: Boolean(s.codeHash),
+      locked: Boolean(p.lockedAt),
+      lockReason: p.lockReason ?? null,
+      requiresInvigilator: Boolean(p.requiresInvigilator),
+      locks: p.locks,
+      focusLosses: p.focusLosses,
+      fullscreenExits: p.fullscreenExits,
+      pasteAttempts: p.pasteAttempts,
+      photos: p.photos,
+      screens: p.screens,
+      screenShare: p.screenShare ?? null,
+      cameraLost: p.cameraLost ?? 0,
+      identityPhotoId: pre.identityPhotoId ?? null,
+      camera: pre.camera ?? null,
+      latestPhotoId: latestMap.get(s.id)?.photo ?? null,
+      latestScreenId: latestMap.get(s.id)?.screen ?? null,
+      lastPhotoAt: p.lastPhotoAt ?? null,
+      lastScreenAt: p.lastScreenAt ?? null,
+      lastSeenAt: p.lastSeenAt ?? null,
+      noSignal,
+      captureRequested: captureRequestPending(p),
+      notesUnseen: (p.notes ?? []).filter((n) => !n.seenAt).length,
+      incidents: incidentCount.get(s.id) ?? 0,
+      answered,
+      questionCount,
+      sealHash: s.sealHash ? s.sealHash.slice(0, 16) : null,
+      attention,
+      attentionReasons: reasons,
+    };
+  });
+  const alerts = incidentRows
+    .slice(0, 40)
+    .map(({ i, byName }) => ({ id: i.id, sessionId: i.sessionId, learnerId: learnerOf.get(i.sessionId) ?? null, learnerName: nameOf.get(i.sessionId) ?? "", type: i.type, at: i.occurredAt.toISOString(), detail: i.actionTaken, by: i.raisedBy === "invigilator" ? byName ?? "invigilator" : "system" }));
+  const invigilators = await db.select({ id: users.id, name: users.name }).from(sittingInvigilators).innerJoin(users, eq(users.id, sittingInvigilators.invigilatorId)).where(eq(sittingInvigilators.sittingId, sitting.id));
+  return res.json({
+    sitting: { id: sitting.id, name: sitting.name ?? `${meta?.qualificationTitle ?? ""} · ${meta?.paper ?? ""}`, qualificationTitle: meta?.qualificationTitle ?? "", paper: meta?.paper ?? "", minutes: meta?.minutes ?? 0, venue: sitting.venue, startTime: sitting.startTime.toISOString(), endTime: sitting.endTime.toISOString(), invigilators },
+    serverTime: new Date(now).toISOString(),
+    counts: {
+      total: learners.length,
+      scheduled: learners.filter((l) => l.status === "scheduled").length,
+      checkedIn: learners.filter((l) => l.status === "checked_in").length,
+      writing: learners.filter((l) => l.status === "in_progress").length,
+      locked: learners.filter((l) => l.locked).length,
+      needsYou: learners.filter((l) => l.attention === "red").length,
+      submitted: learners.filter((l) => l.status === "submitted" || l.status === "sealed").length,
+    },
+    manualIncidentTypes: Object.entries(MANUAL_INCIDENTS).map(([code, m]) => ({ code, title: m.title, severity: m.severity })),
+    learners,
+    alerts,
+  });
+});
+
+sittingsRouter.post("/:id/learners/:learnerId/note", requireAuth, requireRole("administrator", "invigilator"), async (req: AuthedRequest, res) => {
+  const parsed = z.object({ text: z.string().trim().min(2).max(300) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Type the message (2-300 characters)." });
+  const found = await sessionOnSitting(req, req.params.id, req.params.learnerId);
+  if (!found) return res.status(404).json({ error: "That learner is not on this sitting." });
+  if (found.session.status !== "in_progress" && found.session.status !== "checked_in") return res.status(409).json({ error: "The learner is not in the room." });
+  const note = await staffNote(found.session.id, req.auth!.userId, parsed.data.text);
+  return res.json({ ok: true, note });
+});
+
+sittingsRouter.post("/:id/learners/:learnerId/request-capture", requireAuth, requireRole("administrator", "invigilator"), async (req: AuthedRequest, res) => {
+  const found = await sessionOnSitting(req, req.params.id, req.params.learnerId);
+  if (!found) return res.status(404).json({ error: "That learner is not on this sitting." });
+  if (found.session.status !== "in_progress") return res.status(409).json({ error: "The paper is not open." });
+  await staffRequestCapture(found.session.id, req.auth!.userId);
+  return res.json({ ok: true });
+});
+
+sittingsRouter.post("/:id/learners/:learnerId/incident", requireAuth, requireRole("administrator", "invigilator"), async (req: AuthedRequest, res) => {
+  const parsed = z.object({ type: z.enum(Object.keys(MANUAL_INCIDENTS) as [string, ...string[]]), note: z.string().trim().max(300).optional(), warnLearner: z.string().trim().min(2).max(300).optional() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Choose what you observed." });
+  const found = await sessionOnSitting(req, req.params.id, req.params.learnerId);
+  if (!found) return res.status(404).json({ error: "That learner is not on this sitting." });
+  if (found.session.status !== "in_progress" && found.session.status !== "checked_in") return res.status(409).json({ error: "The learner is not in the room." });
+  await staffIncident(found.session.id, req.auth!.userId, parsed.data.type, parsed.data.note);
+  if (parsed.data.warnLearner) await staffNote(found.session.id, req.auth!.userId, parsed.data.warnLearner);
+  return res.json({ ok: true });
+});
+
+sittingsRouter.get("/:id/learners/:learnerId/evidence", requireAuth, requireRole("administrator", "invigilator", "assessor"), async (req: AuthedRequest, res) => {
+  const sitting = await staffOrAssessorOnSitting(req, req.params.id);
+  if (!sitting) return res.status(404).json({ error: "Sitting not found." });
+  const [session] = await db.select().from(learnerSessions).where(and(eq(learnerSessions.sittingId, sitting.id), eq(learnerSessions.learnerId, req.params.learnerId)));
+  if (!session) return res.status(404).json({ error: "That learner is not on this sitting." });
+  const [timeline, integrity] = await Promise.all([evidenceTimeline(session.id), integrityReportFor(session.id)]);
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "session_evidence_viewed", targetType: "session", targetId: session.id });
+  return res.json({ sessionId: session.id, timeline, integrity, blobs: await db.select({ n: sql<number>`count(*)::int` }).from(evidenceBlobs).where(eq(evidenceBlobs.sessionId, session.id)).then((r) => r[0].n) });
 });

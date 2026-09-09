@@ -7,7 +7,7 @@ import { learnerSessions, examSittings, users, qualifications, assessmentInstrum
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
 import { issueSessionToken } from "../auth/jwt.js";
 import { encryptField, decryptField, hashIdentifier } from "../auth/crypto.js";
-import { proctoringOf, recordIncident, submitSession, deadlineFor, SELF_RESUME_LIMIT, MIN_GAP, PHOTO_EVERY_S, SCREEN_EVERY_S, type ProctoringState } from "../proctoring/session.js";
+import { proctoringOf, recordIncident, submitSession, deadlineFor, captureRequestPending, SELF_RESUME_LIMIT, MIN_GAP, PHOTO_EVERY_S, SCREEN_EVERY_S, type ProctoringState } from "../proctoring/session.js";
 
 // Block 5a - the learner's way into a proctored sitting.
 //
@@ -293,12 +293,26 @@ export function roomStateOf(row: NonNullable<Awaited<ReturnType<typeof loadSitti
     cadence: { photoEverySeconds: PHOTO_EVERY_S, screenEverySeconds: SCREEN_EVERY_S },
     counts: { photos: p.photos, screens: p.screens, focusLosses: p.focusLosses, pasteAttempts: p.pasteAttempts },
     sealHash: row.session.sealHash,
+    // Block 5c: messages from the invigilator not yet shown, and whether the
+    // invigilator has asked for a capture now.
+    notes: (p.notes ?? []).filter((n) => !n.seenAt).map((n) => ({ id: n.id, text: n.text, at: n.at })),
+    captureRequested: captureRequestPending(p),
   };
 }
 
+// The room polls this every few seconds while the paper is open; it doubles
+// as the heartbeat the console uses to show who is still connected.
 sitRouter.get("/:id/room", requireAuth, requireRole("learner"), async (req: AuthedRequest, res) => {
   const row = await ownSession(req, req.params.id);
   if (!row) return res.status(404).json({ error: "Sitting not found." });
+  if (row.session.status === "in_progress") {
+    const p = proctoringOf(row.session.proctoring);
+    if (!p.lastSeenAt || Date.now() - new Date(p.lastSeenAt).getTime() > 10_000) {
+      p.lastSeenAt = new Date().toISOString();
+      await saveProctoring(row.session.id, p);
+      row.session.proctoring = p;
+    }
+  }
   return res.json({ ...stateOf(row), room: roomStateOf(row) });
 });
 
@@ -306,7 +320,7 @@ sitRouter.get("/:id/room", requireAuth, requireRole("learner"), async (req: Auth
 // screen lock the paper; the learner can put it back SELF_RESUME_LIMIT times,
 // after that an invigilator has to.
 const eventSchema = z.object({
-  type: z.enum(["focus_loss", "focus_return", "fullscreen_exit", "fullscreen_enter", "visibility_hidden", "paste_attempt", "copy_attempt", "screen_share", "screen_share_lost", "camera_lost", "camera_back", "devtools", "resize"]),
+  type: z.enum(["focus_loss", "focus_return", "fullscreen_exit", "fullscreen_enter", "visibility_hidden", "paste_attempt", "copy_attempt", "screen_share", "screen_share_lost", "camera_lost", "camera_back", "devtools", "resize", "note_seen"]),
   detail: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -361,9 +375,15 @@ sitRouter.post("/:id/event", requireAuth, requireRole("learner"), async (req: Au
     case "devtools":
       await recordIncident(row.session.id, "devtools", detail);
       break;
+    case "note_seen": {
+      const n = (p.notes ?? []).find((x) => x.id === String(detail.id ?? ""));
+      if (n && !n.seenAt) n.seenAt = new Date().toISOString();
+      break;
+    }
     default:
       break; // focus_return, fullscreen_enter, camera_back, resize: informational
   }
+  p.lastSeenAt = new Date().toISOString();
   await saveProctoring(row.session.id, p);
   return res.json({ room: roomStateOf({ ...row, session: { ...row.session, proctoring: p } }) });
 });
@@ -399,6 +419,8 @@ sitRouter.post("/:id/capture", requireAuth, requireRole("learner"), async (req: 
   try {
     const id = await storeEvidence(row.session.id, parsed.data.kind, parsed.data.image, 900 * 1024);
     if (parsed.data.kind === "photo") { p.photos += 1; p.lastPhotoAt = new Date().toISOString(); } else { p.screens += 1; p.lastScreenAt = new Date().toISOString(); }
+    if (parsed.data.reason === "requested") p.captureRequestedAt = null;
+    p.lastSeenAt = new Date().toISOString();
     await saveProctoring(row.session.id, p);
     return res.json({ id, counts: { photos: p.photos, screens: p.screens } });
   } catch (err) {
@@ -419,6 +441,40 @@ export async function staffResume(sessionId: string, actorId: string) {
   await saveProctoring(s.id, p);
   await recordIncident(s.id, "resumed_by_invigilator", { actionTaken: "resumed" }, actorId);
   return p;
+}
+
+// Block 5c: console actions on one learner's paper.
+
+export async function staffNote(sessionId: string, actorId: string, text: string) {
+  const [s] = await db.select().from(learnerSessions).where(eq(learnerSessions.id, sessionId));
+  if (!s) return null;
+  const p = proctoringOf(s.proctoring);
+  const note = { id: randomInt(1e9).toString(36) + Date.now().toString(36), text, at: new Date().toISOString() };
+  p.notes = [...(p.notes ?? []), note].slice(-20);
+  await saveProctoring(s.id, p);
+  await recordIncident(s.id, "note_to_learner", { actionTaken: text }, actorId);
+  return note;
+}
+
+export async function staffRequestCapture(sessionId: string, actorId: string) {
+  const [s] = await db.select().from(learnerSessions).where(eq(learnerSessions.id, sessionId));
+  if (!s) return null;
+  const p = proctoringOf(s.proctoring);
+  p.captureRequestedAt = new Date().toISOString();
+  await saveProctoring(s.id, p);
+  await db.insert(auditLog).values({ actorId, action: "session_capture_requested", targetType: "session", targetId: s.id });
+  return p;
+}
+
+export async function staffIncident(sessionId: string, actorId: string, type: string, note: string | undefined) {
+  const [s] = await db.select().from(learnerSessions).where(eq(learnerSessions.id, sessionId));
+  if (!s) return null;
+  const evId = await recordIncident(s.id, type, { actionTaken: note ?? null }, actorId);
+  // A flagged capture pair goes with every observation so the evidence shows what was seen.
+  const p = proctoringOf(s.proctoring);
+  p.captureRequestedAt = new Date().toISOString();
+  await saveProctoring(s.id, p);
+  return evId;
 }
 
 export { submitSession };

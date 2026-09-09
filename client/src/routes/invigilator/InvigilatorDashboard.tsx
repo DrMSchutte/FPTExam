@@ -1,27 +1,18 @@
-import { useAuth } from "../../lib/auth";
+import { Routes, Route } from "react-router-dom";
+import Shell, { NAV_ICONS } from "../../components/Shell";
+import MySittings from "./MySittings";
+import LiveConsole from "./LiveConsole";
 
-// Invigilator's real screens arrive in Phase D. Until then this page keeps the
-// login → role → routing loop honest and tells the person what's coming.
+// Block 5c: the invigilator's workspace - the sittings they are on, and the
+// live console for each.
 export default function InvigilatorDashboard() {
-  const { user, logout } = useAuth();
+  const NAV_ITEMS = [{ to: "/invigilator", end: true, label: "My sittings", icon: NAV_ICONS.sittings }];
   return (
-    <div className="min-h-screen bg-surface-bg flex items-center justify-center px-4">
-      <div className="card p-8 max-w-md w-full text-center">
-        <div
-          className="mx-auto h-11 w-11 rounded-[11px] grid place-items-center text-white font-display font-extrabold text-lg shadow-btn mb-4"
-          style={{ background: "linear-gradient(145deg, #6BBF3E 0%, #4C9127 100%)" }}
-        >
-          F
-        </div>
-        <h1 className="text-xl font-bold tracking-tight">Invigilator workspace</h1>
-        <p className="text-sm text-ink-muted mt-2">
-          The live invigilation console — video wall, flag feed, and incident log — arrives with the proctoring phase. Your login is set up and ready for when it lands.
-        </p>
-        {user && <p className="text-xs text-ink-faint mt-5">Signed in as {user.email}</p>}
-        <button onClick={() => logout()} className="mt-3 text-xs text-ink-muted underline underline-offset-2 hover:text-ink">
-          Sign out
-        </button>
-      </div>
-    </div>
+    <Shell navItems={NAV_ITEMS} roleLabel="Invigilator workspace" wide>
+      <Routes>
+        <Route index element={<MySittings consolePath={(id) => `/invigilator/sittings/${id}`} />} />
+        <Route path="sittings/:id" element={<LiveConsole backTo="/invigilator" />} />
+      </Routes>
+    </Shell>
   );
 }

@@ -22,6 +22,11 @@ export interface ProctoringState {
   screenShare?: "monitor" | "window" | "browser" | "none" | "unsupported";
   cameraLost?: number;
   resumedBy?: string[]; // invigilator ids, in order
+  // Block 5c: messages from the invigilator (shown once in the room), a
+  // pending on-demand capture, and when the room last spoke to the server.
+  notes?: { id: string; text: string; at: string; seenAt?: string }[];
+  captureRequestedAt?: string | null;
+  lastSeenAt?: string;
 }
 
 export const PROCTORING_DEFAULTS: ProctoringState = { locks: 0, focusLosses: 0, fullscreenExits: 0, pasteAttempts: 0, photos: 0, screens: 0 };
@@ -32,6 +37,10 @@ export const SELF_RESUME_LIMIT = 2;
 export const PHOTO_EVERY_S = 45;
 export const SCREEN_EVERY_S = 120;
 export const MIN_GAP = { photo: 20, screen: 45 } as const;
+// An on-demand capture request the room has not answered in this long lapses
+// (the browser may be locked or offline), so the console button comes back.
+export const CAPTURE_REQUEST_TTL_S = 30;
+export const captureRequestPending = (p: ProctoringState) => Boolean(p.captureRequestedAt) && Date.now() - new Date(p.captureRequestedAt!).getTime() < CAPTURE_REQUEST_TTL_S * 1000;
 
 export const proctoringOf = (raw: unknown): ProctoringState => ({ ...PROCTORING_DEFAULTS, ...((raw ?? {}) as Partial<ProctoringState>) });
 
@@ -68,6 +77,10 @@ export async function submitSession(sessionId: string, submittedAt: Date, how: "
     .returning();
   if (!updated) return null;
   await db.insert(auditLog).values({ actorId: actorId ?? session.learnerId, action: how === "learner" ? "session_submitted" : how === "time_up" ? "session_auto_submitted" : "session_submitted_by_invigilator", targetType: "session", targetId: session.id, reason: `seal ${sealHash.slice(0, 16)}` });
+  // Block 5c: the integrity summary lands with the seal so the assessor sees
+  // both together. Lazy import keeps proctoring/integrity free of a cycle.
+  const { writeIntegrityReport } = await import("./integrity.js");
+  await writeIntegrityReport(session.id);
   await enqueueJob("ai_response_review", { sessionId: session.id });
   return updated;
 }

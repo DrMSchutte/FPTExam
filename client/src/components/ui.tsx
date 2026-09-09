@@ -55,9 +55,10 @@ export function Notice({ kind, children }: { kind: "error" | "success"; children
   return <p className={"rounded-lg border px-3.5 py-2.5 text-sm mb-5 " + cls}>{children}</p>;
 }
 
-export type BadgeTone = "green" | "blue" | "teal" | "amber" | "gray";
+export type BadgeTone = "green" | "blue" | "teal" | "amber" | "gray" | "red";
 const BADGE_TONES: Record<BadgeTone, string> = {
   green: "bg-brand-50 text-brand-700",
+  red: "bg-red-50 text-red-700",
   blue: "bg-blue-50 text-blue-700",
   teal: "bg-teal-50 text-teal-700",
   amber: "bg-amber-50 text-amber-700",

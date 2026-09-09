@@ -16,6 +16,7 @@ import {
 } from "../db/schema.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
 import { enqueueJob } from "../jobs/runner.js";
+import { integrityReportFor, writeIntegrityReport } from "../proctoring/integrity.js";
 import type { Question, QuestionMark, SuggestionReview, Outcome } from "../types.js";
 
 // Phase C: the Assessor's marking workflow and the single result gate.
@@ -213,6 +214,10 @@ assessorRouter.get("/sessions/:id/dossier", requireAuth, requireRole("assessor")
   const [instrument] = await db.select().from(assessmentInstruments).where(eq(assessmentInstruments.id, sitting.instrumentId));
   const [review] = await db.select().from(aiResponseReviews).where(eq(aiResponseReviews.sessionId, session.id));
   const [decision] = await db.select().from(assessorDecisions).where(eq(assessorDecisions.sessionId, session.id));
+  // Block 5c: the integrity summary written at submission (built now for
+  // scripts submitted before the engine existed).
+  const integrity = (await integrityReportFor(session.id)) ?? (await writeIntegrityReport(session.id));
+  const precheck = (session.precheck ?? {}) as { identityPhotoId?: string };
 
   let aiReviewJob: { status: string; error?: string; detail?: string } | null = null;
   if (!review) {
@@ -235,8 +240,10 @@ assessorRouter.get("/sessions/:id/dossier", requireAuth, requireRole("assessor")
       submissionTime: session.submissionTime,
       answers: session.answers ?? {},
     },
-    learner: { id: learner.id, name: learner.name, email: learner.email },
+    learner: { id: learner.id, name: learner.name, email: learner.email, studentNumber: learner.studentNumber, idNumberMasked: learner.idNumberLast4 ? `••••••••• ${learner.idNumberLast4}` : null },
     sitting: { id: sitting.id, startTime: sitting.startTime, endTime: sitting.endTime },
+    integrity,
+    identityPhotoId: precheck.identityPhotoId ?? null,
     qualification: {
       id: qualification.id,
       title: qualification.title,

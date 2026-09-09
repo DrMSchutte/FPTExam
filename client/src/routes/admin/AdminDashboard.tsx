@@ -9,6 +9,7 @@ import AdminCohorts from "./AdminCohorts";
 import AdminCohortDetail from "./AdminCohortDetail";
 import AdminPerson from "./AdminPerson";
 import AdminResults from "./AdminResults";
+import LiveConsole from "../invigilator/LiveConsole";
 
 // Administrator structure per docs/restructure-2026-09-05.md §2: the three
 // steps of organising an exam, plus the results that come out of it.
@@ -33,6 +34,7 @@ export default function AdminDashboard() {
         <Route path="cohorts" element={<AdminCohorts />} />
         <Route path="cohorts/:id" element={<AdminCohortDetail />} />
         <Route path="sittings" element={<AdminSittings />} />
+        <Route path="sittings/:id/console" element={<LiveConsole backTo="/admin/sittings" />} />
         <Route path="results" element={<AdminResults />} />
         {/* Old addresses still work. */}
         <Route path="qualifications" element={<Navigate to="/admin/assessments" replace />} />

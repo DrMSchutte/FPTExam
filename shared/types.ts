@@ -505,8 +505,11 @@ export interface Dossier {
     submissionTime: string | null;
     answers: Record<string, string>;
   };
-  learner: { id: string; name: string; email: string };
+  learner: { id: string; name: string; email: string; studentNumber?: string | null; idNumberMasked?: string | null };
   sitting: { id: string; startTime: string; endTime: string };
+  // Block 5c: what the room recorded, summarised at submission.
+  integrity: IntegritySummary | null;
+  identityPhotoId: string | null;
   qualification: Qualification;
   instrument: {
     id: string;
@@ -602,3 +605,99 @@ export interface JobProgress {
   startedAt: string;
   updatedAt: string;
 }
+
+
+// ---- Block 5c: invigilator console and integrity ------------------------------
+
+export type IntegritySeverity = "info" | "low" | "medium" | "high";
+export type IntegrityRecommendation = "clear" | "review" | "investigate";
+export interface IntegrityFinding { code: string; severity: IntegritySeverity; title: string; detail: string; count?: number }
+export interface IntegritySummary {
+  recommendation: IntegrityRecommendation;
+  headline: string;
+  findings: IntegrityFinding[];
+  counts: { locks: number; focusLosses: number; fullscreenExits: number; pasteAttempts: number; photos: number; screens: number; photosExpected: number; screensExpected: number; invigilatorIncidents: number; notesToLearner: number; entries: number; extraMinutes: number };
+  screenShare: string | null;
+  identityPhoto: boolean;
+  submittedBy: "learner" | "time_up" | "invigilator" | "unknown";
+  writingMinutes: number;
+  generatedAt: string;
+}
+
+export type SittingPhase = "upcoming" | "check_in" | "live" | "ended";
+export interface MySittingRow {
+  id: string;
+  name: string;
+  qualificationTitle: string;
+  paper: string;
+  minutes: number;
+  venue: string | null;
+  startTime: string;
+  endTime: string;
+  phase: SittingPhase;
+  learners: number;
+  checkedIn: number;
+  writing: number;
+  locked: number;
+  submitted: number;
+  invigilators: number;
+  role: "administrator" | "assessor" | "invigilator";
+}
+
+export interface LiveLearner {
+  sessionId: string;
+  learnerId: string;
+  name: string;
+  studentNumber: string | null;
+  idNumberMasked: string | null;
+  status: SessionStatus;
+  checkInTime: string | null;
+  startedAt: string | null;
+  submissionTime: string | null;
+  deadline: string | null;
+  extraMinutes: number;
+  entries: number;
+  reentryAllowed: boolean;
+  codeIssued: boolean;
+  locked: boolean;
+  lockReason: string | null;
+  requiresInvigilator: boolean;
+  locks: number;
+  focusLosses: number;
+  fullscreenExits: number;
+  pasteAttempts: number;
+  photos: number;
+  screens: number;
+  screenShare: string | null;
+  cameraLost: number;
+  identityPhotoId: string | null;
+  camera: boolean | null;
+  latestPhotoId: string | null;
+  latestScreenId: string | null;
+  lastPhotoAt: string | null;
+  lastScreenAt: string | null;
+  lastSeenAt: string | null;
+  noSignal: boolean;
+  captureRequested: boolean;
+  notesUnseen: number;
+  incidents: number;
+  answered: number;
+  questionCount: number;
+  sealHash: string | null;
+  attention: "red" | "amber" | null;
+  attentionReasons: string[];
+}
+
+export interface LiveAlert { id: string; sessionId: string; learnerId: string | null; learnerName: string; type: string; at: string; detail: string | null; by: string }
+
+export interface LiveConsole {
+  sitting: { id: string; name: string; qualificationTitle: string; paper: string; minutes: number; venue: string | null; startTime: string; endTime: string; invigilators: { id: string; name: string }[] };
+  serverTime: string;
+  counts: { total: number; scheduled: number; checkedIn: number; writing: number; locked: number; needsYou: number; submitted: number };
+  manualIncidentTypes: { code: string; title: string; severity: IntegritySeverity }[];
+  learners: LiveLearner[];
+  alerts: LiveAlert[];
+}
+
+export interface TimelineItem { at: string; kind: "identity_photo" | "photo" | "screen" | "incident" | "action"; blobId?: string; type?: string; detail?: string | null; by?: string | null }
+export interface EvidenceResponse { sessionId: string; timeline: TimelineItem[]; integrity: IntegritySummary | null; blobs: number }

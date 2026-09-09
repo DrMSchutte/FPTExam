@@ -168,7 +168,39 @@ its deadline). Roster: lock state, focus losses, paste attempts, capture counts,
 share scope, seal; actions *Resume paper*, *Extra time* (minutes + reason, audited),
 *Submit for them* (reason, audited). Stated limit stands: a browser detects and locks; it
 cannot physically stop the operating system switching apps.
-*Still to come:* 5c the invigilator console and integrity engine, 5d the Statement of Results.
+**5c — the invigilator console and integrity engine (delivered 10 Sep 2026).** An
+invigilator signs in to *My sittings* — the sittings they are assigned to, live ones
+first, with checked-in / writing / locked / submitted counts refreshing on their own —
+and opens the **live console** for a sitting (the Administrator reaches the same console
+from the roster, *Open live console*). The console shows every learner as a card with
+their latest camera still, status, their own clock and flags; cards refresh every 4 s and
+sort attention-first: a **red ring** means the learner needs the invigilator now (locked
+beyond the self-resumes, or **no signal** — the browser has not spoken to the server for
+a minute), **amber** means worth a look (sharing only a window, paste attempts, repeated
+focus loss, camera dropped). A **live incidents** strip lists everything the room records
+the moment it happens (newest first; click a line to open that learner). Selecting a
+learner opens the side panel: the latest camera and screen stills side by side (*Watch
+large* for one big view), the identity photo for comparison, when they were last seen,
+and the actions — **Release the paper**, **Send a message** (appears on the learner's
+screen until they press OK, with quick phrases), **Extra time**, **Capture now** (a photo
+and screen still on demand), **Record what I see** (talking, unauthorised material, phone
+or second device, left the seat, identity in doubt, another person present, other — with a
+note, an optional on-screen warning to the learner, and an automatic capture pair),
+**End the paper** (reason required; submits and seals), *Allow re-entry*, and the
+**evidence timeline** (every capture as a thumbnail, every incident and staff action in
+time order). Every action is recorded against the session. The **integrity engine**
+runs the moment a paper is submitted — by the learner, the clock or the invigilator — and
+writes a deterministic summary from the evidence: identity photo present, focus losses
+and locks, paste attempts, screen-share scope, capture coverage against the expected
+cadence, camera drops, developer-tools attempts, the invigilator's own observations,
+re-entries, extra time and how the paper ended. Each finding has a severity
+(info/low/medium/high); the overall recommendation is **Clear**, **Review** or
+**Investigate**. The assessor's dossier opens with this **Sitting integrity** card — the
+recommendation, the findings, the identity photo, the masked ID and student number, and
+*See the evidence* for the same timeline — so an irregular sitting is never signed off
+unknowingly. The assessor of record may view the console and the evidence but cannot act
+on a live paper; an invigilator sees only their own sittings.
+*Still to come:* 5d the Statement of Results (with the integrity summary) and the result email.
 
 ### Block 6 — Phase E: FPTStaff connection
 *What you get:* People and cohorts pulled from FPTStaff by section; manual adds pushed

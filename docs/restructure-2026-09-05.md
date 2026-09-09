@@ -156,6 +156,19 @@ record keeps, per question, whether the AI's mark was accepted / edited / overri
 sign-off is the assessment decision (registered assessor, as QCTO requires) and the only
 release event. Moderation/verification: FPTStaff.
 
+**Integrity before marks (Block 5c, 10 Sep 2026).** The dossier opens with the sitting's
+integrity summary — Clear / Review / Investigate with the findings, the identity photo and
+the evidence timeline — computed the moment the paper was submitted from everything the
+exam room and the invigilator recorded. The assessor's judgement stays theirs; the
+summary makes sure nothing recorded in the room is missed at sign-off.
+
+### The invigilator's workspace (Block 5c, 10 Sep 2026)
+*My sittings* (the sittings the invigilator is assigned to) and the **live console** per
+sitting: learner cards with the latest camera still, clock and flags (red = needs you,
+amber = worth a look), the live incidents strip, and per learner the camera and screen
+side by side, release / message / extra time / capture now / record what I see / end the
+paper, and the evidence timeline. Administrators open the same console from the roster.
+
 ## 4. Data held on FPT Exam (safety)
 
 | Held | How long | Notes |

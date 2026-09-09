@@ -405,6 +405,7 @@ function Roster({ sitting, cohorts, onChanged, onError }: { sitting: SittingList
       <div className="flex items-center gap-3 flex-wrap">
         <span className="font-display font-semibold text-[13.5px]">Roster · {total.toLocaleString()} student{total === 1 ? "" : "s"}</span>
         {statusLine && <span className="t-sub">{statusLine}</span>}
+        <Link to={`/admin/sittings/${sitting.id}/console`} className="btn btn-sm">Open live console</Link>
         <span className="flex-1" />
         <select className="inp w-auto" value={addCohortId} onChange={(e) => setAddCohortId(e.target.value)}>
           <option value="">Add a whole cohort…</option>

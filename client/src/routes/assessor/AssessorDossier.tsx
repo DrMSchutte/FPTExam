@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
-import type { Dossier, QuestionMark, SuggestionReview, AiQuestionSuggestion, Outcome } from "@shared/types";
+import type { Dossier, QuestionMark, SuggestionReview, AiQuestionSuggestion, Outcome, EvidenceResponse } from "@shared/types";
 import { PageHeader, Card, CardHead, Notice, Badge, TypePill } from "../../components/ui";
+import { IntegrityBadge, Timeline } from "../invigilator/LiveConsole";
 
 const fmt = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -239,6 +240,8 @@ export default function AssessorDossier() {
           The AI has marked this script against the memo and its marks and feedback are filled in below, each tagged <strong>AI-recommended</strong>. Read them, change any you disagree with, then sign off. Your sign-off is the assessment decision.
         </Notice>
       )}
+
+      <IntegrityCard dossier={dossier} />
 
       {signedOff && dossier.decision && (
         <Card className="p-5 mb-6 border-brand-100 bg-brand-50/40">
@@ -621,5 +624,42 @@ export default function AssessorDossier() {
         </div>
       )}
     </>
+  );
+}
+
+
+// Block 5c: what the exam room recorded, summarised - the assessor sees this
+// before marking so an irregular sitting is never signed off unknowingly.
+function IntegrityCard({ dossier }: { dossier: Dossier }) {
+  const ig = dossier.integrity;
+  const [open, setOpen] = useState(false);
+  const [evidence, setEvidence] = useState<EvidenceResponse | null>(null);
+  useEffect(() => {
+    if (open && !evidence) api.get<EvidenceResponse>(`/sittings/${dossier.sitting.id}/learners/${dossier.learner.id}/evidence`).then(setEvidence).catch(() => setEvidence(null));
+  }, [open, evidence, dossier.sitting.id, dossier.learner.id]);
+  if (!ig) return null;
+  const flagged = ig.findings.filter((f) => f.severity !== "info");
+  const tone = ig.recommendation === "clear" ? "border-brand-100 bg-brand-50/30" : ig.recommendation === "review" ? "border-amber-200 bg-amber-50/40" : "border-red-200 bg-red-50/40";
+  return (
+    <Card className={"mb-6 " + tone}>
+      <div className="p-5 flex items-start gap-4">
+        {dossier.identityPhotoId && <img src={`/api/sit/evidence/${dossier.identityPhotoId}`} alt="Identity photo at check-in" className="h-20 w-[6.5rem] rounded-md object-cover border border-line shrink-0" title="Identity photo taken at check-in" />}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">Sitting integrity</span>
+            <IntegrityBadge r={ig.recommendation} />
+            <span className="t-sub">{dossier.learner.studentNumber ? `${dossier.learner.studentNumber} · ` : ""}ID {dossier.learner.idNumberMasked ?? "—"} · wrote for {ig.writingMinutes} min · {ig.counts.photos} photos, {ig.counts.screens} screens · submitted by {ig.submittedBy === "time_up" ? "the clock" : ig.submittedBy === "invigilator" ? "the invigilator" : "the learner"}</span>
+          </div>
+          <p className="text-[14px] font-semibold mt-1">{ig.headline}</p>
+          {flagged.length > 0 && (
+            <ul className="mt-2 space-y-1 text-[13px]">
+              {flagged.map((f) => <li key={f.code} className="flex gap-2"><span className={"mt-1.5 h-2 w-2 rounded-full shrink-0 " + (f.severity === "high" ? "bg-red-500" : f.severity === "medium" ? "bg-amber-400" : "bg-blue-300")} /><span><span className="font-semibold">{f.title}.</span> <span className="text-ink-muted">{f.detail}</span></span></li>)}
+            </ul>
+          )}
+          <button type="button" className="lnk mt-2" onClick={() => setOpen(!open)}>{open ? "Hide the evidence" : "See the evidence — photos, screens and every event"}</button>
+        </div>
+      </div>
+      {open && <div className="border-t border-line p-5 bg-surface">{evidence ? <Timeline e={evidence} showIntegrity={false} /> : <p className="t-sub">Loading the evidence…</p>}</div>}
+    </Card>
   );
 }
