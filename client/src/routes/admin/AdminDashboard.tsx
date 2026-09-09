@@ -5,6 +5,7 @@ import AdminAssessments from "./AdminAssessments";
 import AdminInstrumentDetail from "./AdminInstrumentDetail";
 import AdminSittings from "./AdminSittings";
 import AdminUsers from "./AdminUsers";
+import AdminPerson from "./AdminPerson";
 import AdminResults from "./AdminResults";
 
 // Administrator structure per docs/restructure-2026-09-05.md §2: the three
@@ -25,6 +26,7 @@ export default function AdminDashboard() {
         <Route path="assessments" element={<AdminAssessments />} />
         <Route path="assessments/:id" element={<AdminInstrumentDetail />} />
         <Route path="people" element={<AdminUsers />} />
+        <Route path="people/:id" element={<AdminPerson />} />
         <Route path="sittings" element={<AdminSittings />} />
         <Route path="results" element={<AdminResults />} />
         {/* Old addresses still work. */}

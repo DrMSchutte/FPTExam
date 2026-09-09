@@ -85,6 +85,13 @@
       "when": 1788952300259,
       "tag": "0011_account_setup_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1788962732086,
+      "tag": "0012_people_at_scale",
+      "breakpoints": true
     }
   ]
 }

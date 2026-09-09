@@ -51,6 +51,12 @@ authRouter.post("/login", async (req, res) => {
   if (!ok) {
     return res.status(401).json({ error: "Invalid email or password." });
   }
+  if (row.status === "suspended" || row.status === "archived") {
+    return res.status(403).json({ error: "This account is not active. Contact the FPT Academy Administrator." });
+  }
+  if (row.status === "invited") {
+    await db.update(users).set({ status: "active", activatedAt: row.activatedAt ?? new Date() }).where(eq(users.id, row.id));
+  }
 
   if (row.mfaSecret) {
     const pendingToken = issuePendingMfaToken(row.id);
@@ -111,7 +117,7 @@ authRouter.post("/logout", async (_req, res) => {
 // for supervisory roles. The token in the URL is the only credential here.
 authRouter.get("/setup/:token", async (req, res) => {
   const live = await findLiveSetupToken(req.params.token);
-  if (!live) return res.status(404).json({ error: "This set-up link is not valid any more.", detail: "It may have been used already or expired. Ask the Administrator to send a new one." });
+  if (!live || live.user.status === "suspended" || live.user.status === "archived") return res.status(404).json({ error: "This set-up link is not valid any more.", detail: "It may have been used already or expired. Ask the Administrator to send a new one." });
   const roleRows = await db.select({ role: userRoles.role }).from(userRoles).where(eq(userRoles.userId, live.user.id));
   return res.json({
     name: live.user.name,
@@ -133,12 +139,15 @@ authRouter.post("/setup/:token", async (req, res) => {
   const parsed = setupSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid request body.", detail: parsed.error.issues.map((i) => i.message).join(" ") });
   const live = await findLiveSetupToken(req.params.token);
-  if (!live) return res.status(404).json({ error: "This set-up link is not valid any more.", detail: "Ask the Administrator to send a new one." });
+  if (!live || live.user.status === "suspended" || live.user.status === "archived") return res.status(404).json({ error: "This set-up link is not valid any more.", detail: "Ask the Administrator to send a new one." });
   if (live.user.mfaSecret) {
     if (!parsed.data.mfaCode) return res.status(400).json({ error: "Enter the 6-digit code from your authenticator app to confirm it is set up." });
     if (!verifyMfaToken(parsed.data.mfaCode, live.user.mfaSecret)) return res.status(400).json({ error: "That code is not right. Check the app shows FPT Exam and try the current code." });
   }
-  await db.update(users).set({ passwordHash: await hashPassword(parsed.data.password) }).where(eq(users.id, live.user.id));
+  await db
+    .update(users)
+    .set({ passwordHash: await hashPassword(parsed.data.password), status: live.user.status === "invited" ? "active" : live.user.status, activatedAt: live.user.activatedAt ?? new Date() })
+    .where(eq(users.id, live.user.id));
   await markSetupTokenUsed(live.token.id);
   await db.insert(auditLog).values({ actorId: live.user.id, action: "account_setup_completed", targetType: "user", targetId: live.user.id });
   return res.json({ ok: true, email: live.user.email });

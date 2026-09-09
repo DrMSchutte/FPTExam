@@ -7,6 +7,7 @@ import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { authRouter } from "./routes/auth.js";
 import { usersRouter } from "./routes/users.js";
+import { peopleRouter } from "./routes/people.js";
 import { qualificationsRouter } from "./routes/qualifications.js";
 import { instrumentsRouter } from "./routes/instruments.js";
 import { sittingsRouter } from "./routes/sittings.js";
@@ -25,13 +26,14 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json());
+app.use(express.json({ limit: "5mb" }));
 app.use(cookieParser());
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 app.use("/api/auth", authRouter);
 app.use("/api/users", usersRouter);
+app.use("/api/people", peopleRouter);
 app.use("/api/qualifications", qualificationsRouter);
 app.use("/api/instruments", instrumentsRouter);
 app.use("/api/assessments", assessmentsRouter);

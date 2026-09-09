@@ -1,12 +1,13 @@
 import { Router } from "express";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { eq, sql, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { users, userRoles, auditLog } from "../db/schema.js";
 import { hashPassword } from "../auth/password.js";
 import { randomBytes } from "node:crypto";
 import { generateMfaSecret, buildMfaOtpAuthUrl } from "../auth/mfa.js";
 import { issueSetupLink, appBaseUrl } from "../auth/setupLinks.js";
+import { encryptField, last4 } from "../auth/crypto.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
 import type { UserRole } from "../types.js";
 
@@ -31,6 +32,10 @@ const createUserSchema = z.object({
   // with source = "fptstaff" and their FPTStaff ID.
   source: z.enum(["manual", "fptstaff"]).optional(),
   fptstaffId: z.string().min(1).optional(),
+  // Learner identity for the Statement of Results; assessor registration number.
+  studentNumber: z.string().trim().max(40).optional(),
+  idNumber: z.string().trim().regex(/^[0-9 ]{6,20}$/, "ID number should be digits only.").optional(),
+  registrationNumber: z.string().trim().max(60).optional(),
 });
 
 // Only an Administrator can create accounts - there is no public sign-up,
@@ -44,11 +49,15 @@ usersRouter.post(
     if (!parsed.success) {
       return res.status(400).json({ error: "Invalid request body.", detail: parsed.error.message });
     }
-    const { name, email, password, roles, employmentRelationship, source, fptstaffId } = parsed.data;
+    const { name, email, password, roles, employmentRelationship, source, fptstaffId, studentNumber, idNumber, registrationNumber } = parsed.data;
 
     const [existing] = await db.select().from(users).where(eq(users.email, email));
     if (existing) {
       return res.status(409).json({ error: "A user with that email already exists." });
+    }
+    if (studentNumber) {
+      const [dupe] = await db.select({ id: users.id }).from(users).where(eq(users.studentNumber, studentNumber));
+      if (dupe) return res.status(409).json({ error: "Another person already has that student number." });
     }
 
     // Enforce role independence: an Invigilator on a given exam cannot also
@@ -77,6 +86,14 @@ usersRouter.post(
         employmentRelationship: employmentRelationship ?? null,
         source: source ?? "manual",
         fptstaffId: fptstaffId ?? null,
+        studentNumber: studentNumber || null,
+        idNumberEnc: idNumber ? encryptField(idNumber.replace(/\s/g, "")) : null,
+        idNumberLast4: idNumber ? last4(idNumber) : null,
+        registrationNumber: registrationNumber || null,
+        // With a password set directly the person can sign in now; otherwise
+        // they are invited until they use their set-up link.
+        status: password ? "active" : "invited",
+        activatedAt: password ? new Date() : null,
       })
       .returning();
 
@@ -104,9 +121,19 @@ usersRouter.post(
   }
 );
 
-usersRouter.get("/", requireAuth, requireRole("administrator"), async (_req, res) => {
-  const rows = await db.select().from(users);
-  const roleRows = await db.select().from(userRoles);
+// Whole-list endpoint kept for the sitting form and the overview. At scale the
+// People page (GET /people) is the way to browse; this one answers only the
+// supervisory accounts when asked (?supervisory=1) and is capped otherwise.
+usersRouter.get("/", requireAuth, requireRole("administrator"), async (req, res) => {
+  const supervisoryOnly = req.query.supervisory === "1";
+  const rows = supervisoryOnly
+    ? await db
+        .select()
+        .from(users)
+        .where(sql`${users.id} IN (SELECT ${userRoles.userId} FROM ${userRoles} WHERE ${userRoles.role} <> 'learner')`)
+        .orderBy(users.name)
+    : await db.select().from(users).orderBy(users.name).limit(2000);
+  const roleRows = rows.length ? await db.select().from(userRoles).where(inArray(userRoles.userId, rows.map((r) => r.id))) : [];
   const rolesByUser = new Map<string, UserRole[]>();
   for (const r of roleRows) {
     const list = rolesByUser.get(r.userId) ?? [];

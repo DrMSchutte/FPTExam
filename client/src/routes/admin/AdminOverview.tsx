@@ -8,7 +8,8 @@ interface Data {
   qualifications: Qualification[];
   instruments: AssessmentInstrument[];
   sittings: ExamSitting[];
-  users: PublicUser[];
+  users: PublicUser[]; // supervisory accounts only (for assessor names); learners are counted, not listed
+  people: Record<string, { total: number; invited: number }>;
 }
 
 const fmtDate = (iso: string) =>
@@ -21,13 +22,14 @@ export default function AdminOverview() {
 
   useEffect(() => {
     (async () => {
-      const [qualifications, instruments, sittings, users] = await Promise.all([
+      const [qualifications, instruments, sittings, users, people] = await Promise.all([
         api.get<Qualification[]>("/qualifications"),
         api.get<AssessmentInstrument[]>("/instruments"),
         api.get<ExamSitting[]>("/sittings"),
-        api.get<PublicUser[]>("/users"),
+        api.get<PublicUser[]>("/users?supervisory=1"),
+        api.get<Record<string, { total: number; invited: number }>>("/people/summary"),
       ]);
-      setData({ qualifications, instruments, sittings, users });
+      setData({ qualifications, instruments, sittings, users, people });
     })();
   }, []);
 
@@ -37,7 +39,7 @@ export default function AdminOverview() {
     .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
     .slice(0, 5);
 
-  const count = (role: string) => data?.users.filter((u) => u.roles.includes(role as never)).length ?? 0;
+  const count = (type: string) => data?.people[type]?.total ?? 0;
   const eisa = data?.qualifications.filter((q) => q.qctoRegistrationType === "eisa").length ?? 0;
   const fisa = data?.qualifications.filter((q) => q.qctoRegistrationType === "fisa").length ?? 0;
   const nonQcto = data?.qualifications.filter((q) => q.qctoRegistrationType === "non_qcto").length ?? 0;
@@ -68,8 +70,8 @@ export default function AdminOverview() {
     },
     {
       label: "People registered",
-      value: data?.users.length,
-      sub: `${count("assessor")} assessors · ${count("learner")} learners`,
+      value: data ? Object.values(data.people).reduce((a, b) => a + b.total, 0) : undefined,
+      sub: `${count("students")} students · ${count("assessors")} assessors · ${count("invigilators")} invigilators`,
       tone: "bg-teal-50 text-teal-700",
       icon: <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /></>,
     },

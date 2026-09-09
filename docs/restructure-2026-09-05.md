@@ -82,6 +82,19 @@ manual "add new" until FPTStaff is connected (pushed back with duplicate guard).
 site holds name, email, role, FPTStaff reference, and for supervisory roles the login and
 authenticator secret. No ID numbers in the clear, no addresses, contracts or HR data.
 
+**Built for scale (Block 1 of the build plan, delivered 9 Sep 2026).** The page is four
+tabs — Students · Assessors & Moderators · Invigilators · Administrators — each with a
+count and the number still waiting to set up their sign-in. Search is instant across
+name, email, student number and the last four digits of the ID number; a status filter
+(Invited · Active · Suspended · Archived) and server-side paging keep tens of thousands
+of rows behaving like twenty. Each person has a page: details (ID number masked, full
+reveal audited), sign-in state with send-link / suspend / reactivate / archive, their
+sittings and results (or marking and invigilation duties), and their audit trail. People
+are added one at a time or imported from CSV/XLSX against a downloadable template, with a
+preview of create / update / unchanged / rejected rows before anything is saved. Every
+tab exports to CSV without full ID numbers. Suspended and archived accounts are locked
+out of every request, not just the login page.
+
 **Sign-in set-up (added 9 Sep 2026).** The Administrator never handles anyone's password.
 Registering a person issues a one-use **set-up link** (48 hours) that is emailed to them
 when email is connected (SMTP secrets) and otherwise shown to the Administrator to send.

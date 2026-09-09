@@ -61,6 +61,57 @@ export interface PublicUser {
   createdAt: string;
 }
 
+export type UserStatus = "invited" | "active" | "suspended" | "archived";
+export type PersonType = "students" | "assessors" | "invigilators" | "administrators";
+
+// A row on the People page (build plan Block 1). The ID number is never sent
+// in the clear here - masked to its last four digits.
+export interface PersonRow {
+  id: string;
+  name: string;
+  email: string;
+  roles: UserRole[];
+  status: UserStatus;
+  employmentRelationship: EmploymentRelationship | null;
+  source: UserSource;
+  fptstaffId: string | null;
+  studentNumber: string | null;
+  idNumberMasked: string | null;
+  registrationNumber: string | null;
+  activatedAt: string | null;
+  createdAt: string;
+}
+
+export interface PeopleListResponse {
+  rows: PersonRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  counts: Partial<Record<UserStatus, number>>;
+}
+
+export interface PersonDetail extends PersonRow {
+  setup: { liveLinkExpiresAt: string | null; activatedAt: string | null; hasAuthenticator: boolean };
+  sittings: { sessionId: string; sittingId: string; startTime: string; endTime: string; qualificationTitle: string; sessionStatus: string; outcome: "competent" | "not_yet_competent" | null; totalMark: number | null; totalMax: number | null; signedOffAt: string | null }[];
+  assessing: { sittingId: string; startTime: string; qualificationTitle: string; scripts: number; signedOff: number }[];
+  invigilating: { sittingId: string; startTime: string; endTime: string; qualificationTitle: string }[];
+  audit: { action: string; reason: string | null; at: string }[];
+}
+
+export interface ImportPreviewRow {
+  line: number;
+  name: string;
+  email: string;
+  type: PersonType | null;
+  studentNumber: string | null;
+  idNumber: string | null;
+  registrationNumber: string | null;
+  employment: "internal" | "external" | null;
+  action: "create" | "update" | "skip" | "reject";
+  reasons: string[];
+  existingId?: string;
+}
+
 export interface LoginResponse {
   mfaRequired: boolean;
   // Present only once MFA has been verified (or if the account has no MFA configured yet).

@@ -1,6 +1,23 @@
 import type { Request, Response, NextFunction } from "express";
+import { eq } from "drizzle-orm";
 import { verifySessionToken } from "./jwt.js";
+import { db } from "../db/index.js";
+import { users } from "../db/schema.js";
 import type { UserRole } from "../types.js";
+
+// A suspended or archived account must stop working at once, not when its
+// 8-hour session runs out. One indexed lookup per request, cached for a minute
+// per user so busy screens (polling) don't hammer the table.
+const statusCache = new Map<string, { status: string; at: number }>();
+async function accountBlocked(userId: string): Promise<boolean> {
+  const hit = statusCache.get(userId);
+  if (hit && Date.now() - hit.at < 60_000) return hit.status === "suspended" || hit.status === "archived";
+  const [row] = await db.select({ status: users.status }).from(users).where(eq(users.id, userId));
+  const status = row?.status ?? "archived";
+  statusCache.set(userId, { status, at: Date.now() });
+  return status === "suspended" || status === "archived";
+}
+export const forgetAccountStatus = (userId: string) => statusCache.delete(userId);
 
 export interface AuthedRequest extends Request {
   auth?: { userId: string; roles: UserRole[] };
@@ -16,13 +33,19 @@ export function requireAuth(req: AuthedRequest, res: Response, next: NextFunctio
   if (!token) {
     return res.status(401).json({ error: "Not authenticated." });
   }
+  let payload;
   try {
-    const payload = verifySessionToken(token);
-    req.auth = { userId: payload.sub, roles: payload.roles };
-    next();
+    payload = verifySessionToken(token);
   } catch {
     return res.status(401).json({ error: "Session invalid or expired." });
   }
+  accountBlocked(payload.sub)
+    .then((blocked) => {
+      if (blocked) return res.status(403).json({ error: "This account is not active. Contact the FPT Academy Administrator." });
+      req.auth = { userId: payload.sub, roles: payload.roles };
+      next();
+    })
+    .catch(next);
 }
 
 /**

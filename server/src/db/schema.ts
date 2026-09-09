@@ -30,6 +30,10 @@ export const userRoleEnum = pgEnum("user_role", [
 // added via "Add new" when they aren't in FPTStaff yet.
 export const userSourceEnum = pgEnum("user_source", ["manual", "fptstaff"]);
 
+// Account status (build plan Block 1). invited: registered, set-up link not yet
+// used; active: can sign in; suspended: kept but cannot sign in; archived: left.
+export const userStatusEnum = pgEnum("user_status", ["invited", "active", "suspended", "archived"]);
+
 export const employmentRelationshipEnum = pgEnum("employment_relationship", [
   "internal",
   "external",
@@ -96,6 +100,17 @@ export const users = pgTable("users", {
   passwordHash: text("password_hash").notNull(),
   mfaSecret: text("mfa_secret"),
   idNumberHash: text("id_number_hash"),
+  // Learner identity for the Statement of Results (decision 9 Sep 2026): the ID
+  // number is stored encrypted (AES-256-GCM, see auth/crypto.ts) and only its
+  // last four digits in the clear for search and masked display.
+  idNumberEnc: text("id_number_enc"),
+  idNumberLast4: text("id_number_last4"),
+  studentNumber: text("student_number").unique(),
+  // Assessors / moderators: their professional registration number.
+  registrationNumber: text("registration_number"),
+  status: userStatusEnum("status").notNull().default("invited"),
+  // First successful set-up (or sign-in) - what turns invited into active.
+  activatedAt: timestamp("activated_at", { withTimezone: true }),
   photoReference: text("photo_reference"),
   employmentRelationship: employmentRelationshipEnum("employment_relationship"),
   // FPTStaff integration hooks (designed in from the start, active once
