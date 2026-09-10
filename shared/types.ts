@@ -744,3 +744,40 @@ export interface MyEvidence {
   captures: { id: string; kind: "photo" | "screen"; at: string }[];
   segments: { id: string; kind: "camera" | "screen"; seq: number; startedAt: string; durationMs: number; bytes: number }[];
 }
+
+// ---- Block 8d: analytics --------------------------------------------------------
+
+export interface AnalyticsMeasures {
+  registered: number; checkedIn: number; opened: number; submitted: number; released: number;
+  competent: number; notYetCompetent: number; passRate: number | null;
+  avgPercentage: number | null; avgMarkHours: number | null; avgMinutesWritten: number | null;
+  noShows: number; didNotOpen: number; didNotFinish: number; awaitingMarking: number;
+  integrity: { clear: number; review: number; investigate: number }; flagRate: number | null;
+}
+export type AnalyticsRow = { key: string | null; label: string } & AnalyticsMeasures;
+export interface AnalyticsHeadline extends AnalyticsMeasures { sittings: number; venues: number; papers: number; recordedSittings: number }
+
+export interface AssessorConsistencyRow {
+  assessorId: string; name: string; signedOff: number; avgTurnaroundHours: number | null; avgPercentage: number | null; passRate: number | null;
+  questionsCompared: number; acceptedUnchanged: number | null; meanAbsDiffMarks: number | null; meanAbsDiffPct: number | null;
+  markedAbove: number; markedBelow: number; outcomeDiffered: number; overrides: number;
+}
+
+export interface AnalyticsOverviewResponse {
+  window: { from: string; to: string; qualificationId: string | null };
+  headline: AnalyticsHeadline;
+  byQualification: AnalyticsRow[]; byCohort: AnalyticsRow[]; byPaper: AnalyticsRow[]; byVenue: AnalyticsRow[]; bySitting: AnalyticsRow[]; byMonth: AnalyticsRow[];
+  assessors: AssessorConsistencyRow[];
+  findings: { code: string; title: string; severity: IntegritySeverity; sessions: number }[];
+  papers: { id: string; version: string; qualificationTitle: string; sat: number }[];
+}
+
+export interface ItemRow {
+  questionId: string; index: number; type: QuestionType; bloomLevel: BloomLevel | null; eloRef: string | null; acRef: string | null;
+  prompt: string; maxMark: number; answered: number; avgMark: number | null; facility: number | null;
+  zeroes: number; fullMarks: number; blank: number; discrimination: number | null; flags: string[];
+}
+export interface ItemAnalysisResponse {
+  instrument: { id: string; version: string; qualificationTitle: string; questions: number; totalMarks: number; verdict: string | null };
+  learners: number; avgPercentage: number | null; passRate: number | null; items: ItemRow[]; note: string;
+}

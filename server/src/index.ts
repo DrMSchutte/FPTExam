@@ -18,6 +18,7 @@ import { backfillIdNumberHashes } from "./db/backfill.js";
 import { qualificationsRouter } from "./routes/qualifications.js";
 import { instrumentsRouter } from "./routes/instruments.js";
 import { sittingsRouter } from "./routes/sittings.js";
+import { analyticsRouter } from "./routes/analytics.js";
 import { sessionsRouter } from "./routes/sessions.js";
 import { runMigrations, ensureBootstrapAdmin } from "./db/bootstrap.js";
 import { assessorRouter } from "./routes/assessor.js";
@@ -55,6 +56,7 @@ if (isSampleExportEnabled()) app.use("/api/exam-export", sampleExportRouter);
 app.use("/api/fptstaff", fptstaffRouter);
 if (isSampleSyncEnabled()) app.use("/api/exam-sync", sampleSyncRouter);
 app.use("/api/sittings", sittingsRouter);
+app.use("/api/analytics", analyticsRouter);
 // sessionsRouter's own paths already start with /sessions or /me, so it
 // mounts at the API root rather than under an extra prefix.
 app.use("/api", sessionsRouter);
