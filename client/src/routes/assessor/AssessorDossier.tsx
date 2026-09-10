@@ -661,6 +661,7 @@ function IntegrityCard({ dossier }: { dossier: Dossier }) {
           <div className="flex items-center gap-4 mt-2">
             <button type="button" className="lnk" onClick={() => setOpen(!open)}>{open ? "Hide the evidence" : "See the evidence — photos, screens and every event"}</button>
             {ig.recording && <button type="button" className="lnk" onClick={() => setVideo(!video)}>{video ? "Hide the recording" : `Watch the recording — ${ig.recording.camera} min`}</button>}
+            <a className="lnk" href={`/api/sittings/${dossier.sitting.id}/learners/${dossier.learner.id}/evidence-pack.pdf`} target="_blank" rel="noreferrer">Evidence pack (PDF)</a>
           </div>
         </div>
       </div>

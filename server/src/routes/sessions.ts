@@ -159,3 +159,35 @@ sessionsRouter.post("/sessions/:id/submit", requireAuth, requireRole("learner"),
   const updated = await submitSession(session.id, new Date(), "learner");
   return res.json(updated ?? session);
 });
+
+// Block 8c: what was recorded of me. The consent text promises the learner may
+// see their own recordings; here they are, once the paper is submitted -
+// identity photo, every still, every recording segment, and how long they are
+// kept. Not the integrity findings: those belong to the assessor's decision.
+sessionsRouter.get("/sessions/:id/evidence", requireAuth, requireRole("learner"), async (req: AuthedRequest, res) => {
+  if (req.auth!.sittingSession) return res.status(403).json({ error: "Sign in with your account to see your recordings." });
+  const session = await loadOwnedSession(req.params.id, req.auth!.userId);
+  if (!session) return res.status(404).json({ error: "Session not found." });
+  if (session.status !== "submitted" && session.status !== "sealed") return res.status(409).json({ error: "Your recordings are available once the paper has been submitted." });
+  const [sitting] = await db.select().from(examSittings).where(eq(examSittings.id, session.sittingId));
+  const { captureEvents, recordingSegments, auditLog } = await import("../db/schema.js");
+  const { asc } = await import("drizzle-orm");
+  const caps = await db.select().from(captureEvents).where(eq(captureEvents.sessionId, session.id)).orderBy(asc(captureEvents.capturedAt));
+  const segs = await db.select().from(recordingSegments).where(eq(recordingSegments.sessionId, session.id)).orderBy(asc(recordingSegments.kind), asc(recordingSegments.seq));
+  const { retentionUntil } = await import("../results/portfolio.js");
+  const { fullRecordingOn, SEGMENT_SECONDS } = await import("../proctoring/session.js");
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "session_evidence_self_viewed", targetType: "session", targetId: session.id });
+  const pre = (session.precheck ?? {}) as { identityPhotoId?: string };
+  return res.json({
+    sessionId: session.id,
+    submittedAt: session.submissionTime?.toISOString() ?? null,
+    startedAt: session.startedAt?.toISOString() ?? null,
+    sealHash: session.sealHash,
+    fullRecording: fullRecordingOn(sitting.proctoringProfile),
+    segmentSeconds: SEGMENT_SECONDS,
+    keptUntil: retentionUntil(sitting.endTime).toISOString(),
+    identityPhotoId: pre.identityPhotoId ?? null,
+    captures: caps.filter((c) => c.storageRef.startsWith("blob:") && (c.type === "photo" || c.type === "screen")).map((c) => ({ id: c.storageRef.slice(5), kind: c.type, at: c.capturedAt.toISOString() })),
+    segments: segs.map((s) => ({ id: s.id, kind: s.kind, seq: s.seq, startedAt: s.startedAt.toISOString(), durationMs: s.durationMs, bytes: s.bytes })),
+  });
+});

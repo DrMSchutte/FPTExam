@@ -9,6 +9,7 @@ import AdminCohorts from "./AdminCohorts";
 import AdminCohortDetail from "./AdminCohortDetail";
 import AdminPerson from "./AdminPerson";
 import AdminResults from "./AdminResults";
+import AdminArchive from "./AdminArchive";
 import LiveConsole from "../invigilator/LiveConsole";
 
 // Administrator structure per docs/restructure-2026-09-05.md §2: the three
@@ -20,6 +21,7 @@ const NAV_ITEMS = [
   { to: "/admin/cohorts", end: false, label: "Cohorts", icon: NAV_ICONS.cohorts },
   { to: "/admin/sittings", end: false, label: "Schedule the Sitting", icon: NAV_ICONS.sittings },
   { to: "/admin/results", end: false, label: "Results", icon: NAV_ICONS.signed },
+  { to: "/admin/archive", end: false, label: "Evidence Archive", icon: NAV_ICONS.archive },
 ];
 
 export default function AdminDashboard() {
@@ -36,6 +38,7 @@ export default function AdminDashboard() {
         <Route path="sittings" element={<AdminSittings />} />
         <Route path="sittings/:id/console" element={<LiveConsole backTo="/admin/sittings" />} />
         <Route path="results" element={<AdminResults />} />
+        <Route path="archive" element={<AdminArchive />} />
         {/* Old addresses still work. */}
         <Route path="qualifications" element={<Navigate to="/admin/assessments" replace />} />
         <Route path="instruments" element={<Navigate to="/admin/assessments" replace />} />

@@ -79,7 +79,9 @@ sampleSyncRouter.post("/learners", (req, res) => {
   const byEmail = LEARNERS.find((l) => l.email.toLowerCase() === String(b.email).toLowerCase()) ?? pushedLearners.find((l) => l.email.toLowerCase() === String(b.email).toLowerCase());
   const match = byId ?? byEmail;
   if (match) return res.json({ fptstaffId: match.fptstaffId, outcome: "matched" });
-  const fptstaffId = `fs-new-${pushedLearners.length + 1}`;
+  // Stable across restarts: derived from the FPT Exam reference, as a real
+  // FPTStaff would keep the id it issued.
+  const fptstaffId = `fs-new-${b.examRef.replace(/-/g, "").slice(0, 8)}`;
   pushedLearners.push({ fptstaffId, examRef: b.examRef, name: b.name, email: b.email, idNumber: b.idNumber ?? null, studentNumber: b.studentNumber ?? null, receivedAt: new Date().toISOString() });
   res.status(201).json({ fptstaffId, outcome: "created" });
 });

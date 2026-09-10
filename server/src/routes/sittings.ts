@@ -1024,3 +1024,102 @@ sittingsRouter.get("/:id/learners/:learnerId/recording", requireAuth, requireRol
   await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "session_recording_viewed", targetType: "session", targetId: session.id });
   return res.json({ sessionId: session.id, fullRecording: fullRecordingOn(sitting.proctoringProfile), segmentSeconds: SEGMENT_SECONDS, startedAt: session.startedAt?.toISOString() ?? null, submittedAt: session.submissionTime?.toISOString() ?? null, segments, totalBytes: segments.reduce((n, x) => n + x.bytes, 0) });
 });
+
+// ---- Block 8c: the evidence archive ---------------------------------------------------------
+//
+//   GET /sittings/archive                                   completed sittings and what the record holds (administrator)
+//   GET /sittings/:id/register                              the sitting register as data (admin / invigilator on it / assessor of record)
+//   GET /sittings/:id/register.pdf                          the sitting register (PDF)
+//   GET /sittings/:id/portfolio.zip?video=1                 the Portfolio of Evidence for the governing body (administrator)
+//   GET /sittings/:id/learners/:learnerId/evidence-pack.pdf one learner's evidence pack
+//   GET /sittings/:id/learners/:learnerId/evidence-pack.zip?video=1   ...with the files (captures, statement, recording)
+//
+// Every download is written to the audit trail with who took it.
+
+sittingsRouter.get("/archive", requireAuth, requireRole("administrator"), async (_req: AuthedRequest, res) => {
+  const { archiveRows } = await import("../results/portfolio.js");
+  return res.json(await archiveRows());
+});
+
+const registerJson = (d: Awaited<ReturnType<typeof import("../results/portfolio.js")["loadSittingRegister"]>>) => {
+  if (!d) return null;
+  return {
+    sitting: { id: d.sitting.id, name: d.sitting.name, venue: d.sitting.venue, startTime: d.sitting.startTime.toISOString(), endTime: d.sitting.endTime.toISOString(), fullRecording: d.fullRecording, instrumentId: d.instrument.id, paper: d.instrument.version, qualificationTitle: d.qualification.title, assessor: d.assessor?.name ?? null, invigilators: d.invigilators.map((i) => i.name), cohort: d.cohort?.name ?? null, retentionUntil: d.retentionUntil.toISOString() },
+    learners: d.learners.map((l) => ({ sessionId: l.sessionId, learnerId: l.learnerId, name: l.name, idNumberMasked: l.idNumber ? l.idNumber.slice(0, 6) + "•••••••" : null, studentNumber: l.studentNumber, status: l.status, checkInTime: l.checkInTime?.toISOString() ?? null, startedAt: l.startedAt?.toISOString() ?? null, submittedAt: l.submittedAt?.toISOString() ?? null, extraMinutes: l.extraMinutes, integrity: l.integrity, result: l.result ? { ...l.result, signedOffAt: l.result.signedOffAt.toISOString() } : null, marking: l.marking, stills: l.stills, recording: l.recording, packNumber: l.packNumber })),
+  };
+};
+
+sittingsRouter.get("/:id/register", requireAuth, requireRole("administrator", "invigilator", "assessor"), async (req: AuthedRequest, res) => {
+  const sitting = await staffOrAssessorOnSitting(req, req.params.id);
+  if (!sitting) return res.status(404).json({ error: "Sitting not found." });
+  const { loadSittingRegister } = await import("../results/portfolio.js");
+  return res.json(registerJson(await loadSittingRegister(sitting.id)));
+});
+
+sittingsRouter.get("/:id/register.pdf", requireAuth, requireRole("administrator", "invigilator", "assessor"), async (req: AuthedRequest, res) => {
+  const sitting = await staffOrAssessorOnSitting(req, req.params.id);
+  if (!sitting) return res.status(404).json({ error: "Sitting not found." });
+  const { loadSittingRegister, renderRegister } = await import("../results/portfolio.js");
+  const d = await loadSittingRegister(sitting.id);
+  if (!d) return res.status(404).json({ error: "Sitting not found." });
+  const pdf = await renderRegister(d);
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "sitting_register_downloaded", targetType: "sitting", targetId: sitting.id });
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `${req.query.download ? "attachment" : "inline"}; filename="Sitting-Register-${d.sitting.startTime.toISOString().slice(0, 10)}.pdf"`);
+  res.setHeader("Cache-Control", "private, no-store");
+  return res.send(pdf);
+});
+
+sittingsRouter.get("/:id/portfolio.zip", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
+  const [sitting] = await db.select().from(examSittings).where(eq(examSittings.id, req.params.id));
+  if (!sitting) return res.status(404).json({ error: "Sitting not found." });
+  const { loadSittingRegister, streamPortfolio } = await import("../results/portfolio.js");
+  const d = await loadSittingRegister(sitting.id);
+  if (!d) return res.status(404).json({ error: "Sitting not found." });
+  const video = req.query.video === "1" || req.query.video === "true";
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "sitting_portfolio_downloaded", targetType: "sitting", targetId: sitting.id, reason: video ? "with video" : "documents and captures" });
+  try {
+    await streamPortfolio(res, d, { video });
+  } catch (err) {
+    console.error("portfolio failed", sitting.id, err);
+    if (!res.headersSent) return res.status(500).json({ error: "The portfolio could not be assembled." });
+    res.end();
+  }
+});
+
+async function learnerSessionOn(req: AuthedRequest, sittingId: string, learnerId: string) {
+  const sitting = await staffOrAssessorOnSitting(req, sittingId);
+  if (!sitting) return null;
+  const [session] = await db.select().from(learnerSessions).where(and(eq(learnerSessions.sittingId, sitting.id), eq(learnerSessions.learnerId, learnerId)));
+  return session ? { sitting, session } : null;
+}
+
+sittingsRouter.get("/:id/learners/:learnerId/evidence-pack.pdf", requireAuth, requireRole("administrator", "invigilator", "assessor"), async (req: AuthedRequest, res) => {
+  const found = await learnerSessionOn(req, req.params.id, req.params.learnerId);
+  if (!found) return res.status(404).json({ error: "That learner is not on this sitting." });
+  const { loadEvidencePack, renderEvidencePack, loadBlobs } = await import("../results/evidencePack.js");
+  const d = await loadEvidencePack(found.session.id);
+  if (!d) return res.status(404).json({ error: "Not found." });
+  const pdf = await renderEvidencePack(d, await loadBlobs(found.session.id));
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "session_evidence_pack_downloaded", targetType: "session", targetId: found.session.id, reason: d.packNumber });
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `${req.query.download ? "attachment" : "inline"}; filename="Evidence-Pack-${d.packNumber}.pdf"`);
+  res.setHeader("Cache-Control", "private, no-store");
+  return res.send(pdf);
+});
+
+sittingsRouter.get("/:id/learners/:learnerId/evidence-pack.zip", requireAuth, requireRole("administrator", "invigilator", "assessor"), async (req: AuthedRequest, res) => {
+  const found = await learnerSessionOn(req, req.params.id, req.params.learnerId);
+  if (!found) return res.status(404).json({ error: "That learner is not on this sitting." });
+  const video = req.query.video === "1" || req.query.video === "true";
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "session_evidence_pack_downloaded", targetType: "session", targetId: found.session.id, reason: video ? "zip with video" : "zip" });
+  const { streamLearnerZip } = await import("../results/portfolio.js");
+  try {
+    const ok = await streamLearnerZip(res, found.session.id, { video });
+    if (!ok && !res.headersSent) return res.status(404).json({ error: "Not found." });
+  } catch (err) {
+    console.error("evidence zip failed", found.session.id, err);
+    if (!res.headersSent) return res.status(500).json({ error: "The evidence could not be assembled." });
+    res.end();
+  }
+});

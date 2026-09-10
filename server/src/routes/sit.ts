@@ -226,10 +226,21 @@ sitRouter.post("/:id/check-in", requireAuth, requireRole("learner"), async (req:
 });
 
 // Serve an evidence image to staff (admin / assigned invigilator / assessor).
-sitRouter.get("/evidence/:blobId", requireAuth, requireRole("administrator", "invigilator", "assessor"), async (req: AuthedRequest, res) => {
+// Block 8c: the learner may see their own captures once the paper is submitted
+// (the consent text promises it) - signed in with their account, never with a
+// sitting-code cookie.
+async function learnerOwnsSubmitted(req: AuthedRequest, sessionId: string) {
+  if (req.auth!.sittingSession) return false;
+  const [s] = await db.select({ learnerId: learnerSessions.learnerId, status: learnerSessions.status }).from(learnerSessions).where(eq(learnerSessions.id, sessionId));
+  return Boolean(s && s.learnerId === req.auth!.userId && (s.status === "submitted" || s.status === "sealed"));
+}
+
+sitRouter.get("/evidence/:blobId", requireAuth, requireRole("administrator", "invigilator", "assessor", "learner"), async (req: AuthedRequest, res) => {
   const [blob] = await db.select().from(evidenceBlobs).where(eq(evidenceBlobs.id, req.params.blobId));
   if (!blob) return res.status(404).json({ error: "Not found." });
-  if (!req.auth!.roles.includes("administrator")) {
+  if (req.auth!.roles.includes("learner") && !req.auth!.roles.includes("administrator")) {
+    if (!(await learnerOwnsSubmitted(req, blob.sessionId))) return res.status(403).json({ error: "Not yours." });
+  } else if (!req.auth!.roles.includes("administrator")) {
     const [s] = await db.select({ sittingId: learnerSessions.sittingId }).from(learnerSessions).where(eq(learnerSessions.id, blob.sessionId));
     const [sit] = s ? await db.select().from(examSittings).where(eq(examSittings.id, s.sittingId)) : [];
     const isAssessor = sit?.assignedAssessorId === req.auth!.userId;
@@ -477,10 +488,12 @@ sitRouter.post("/:id/segment", requireAuth, requireRole("learner"), express.raw(
 });
 
 // Serve a segment to staff (administrator / the sitting's invigilator / assessor of record).
-sitRouter.get("/recording/:segmentId", requireAuth, requireRole("administrator", "invigilator", "assessor"), async (req: AuthedRequest, res) => {
+sitRouter.get("/recording/:segmentId", requireAuth, requireRole("administrator", "invigilator", "assessor", "learner"), async (req: AuthedRequest, res) => {
   const [seg] = await db.select().from(recordingSegments).where(eq(recordingSegments.id, req.params.segmentId));
   if (!seg) return res.status(404).json({ error: "Not found." });
-  if (!req.auth!.roles.includes("administrator")) {
+  if (req.auth!.roles.includes("learner") && !req.auth!.roles.includes("administrator")) {
+    if (!(await learnerOwnsSubmitted(req, seg.sessionId))) return res.status(403).json({ error: "Not yours." });
+  } else if (!req.auth!.roles.includes("administrator")) {
     const [s] = await db.select({ sittingId: learnerSessions.sittingId }).from(learnerSessions).where(eq(learnerSessions.id, seg.sessionId));
     const [sit] = s ? await db.select().from(examSittings).where(eq(examSittings.id, s.sittingId)) : [];
     const isAssessor = sit?.assignedAssessorId === req.auth!.userId;

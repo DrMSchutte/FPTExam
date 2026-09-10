@@ -360,6 +360,7 @@ function LearnerPanel({ l, sittingId, now, act, incidentTypes, watch, setWatch, 
             {l.codeIssued && l.entries > 0 && !l.reentryAllowed && !done && <button type="button" className="btn-ghost" disabled={busy} onClick={() => run("allow-reentry", {}, `${l.name} may enter their code once more.`)}>Allow re-entry</button>}
             <button type="button" className={"btn-ghost " + (l.recording ? "" : "col-span-2")} onClick={() => setMode("evidence")}>Evidence timeline{l.incidents ? ` · ${l.incidents} incident${l.incidents === 1 ? "" : "s"}` : ""}</button>
             {l.recording && <button type="button" className="btn-ghost" onClick={() => setMode("recording")}>Recording · {l.recording.camera} min</button>}
+            {done && <a className="btn-ghost col-span-2 text-center" href={`/api/sittings/${sittingId}/learners/${l.learnerId}/evidence-pack.pdf`} target="_blank" rel="noreferrer">Evidence pack (PDF)</a>}
           </div>
         )}
         {mode === "note" && (

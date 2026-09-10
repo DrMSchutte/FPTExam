@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import type { LearnerSittingSummary, PaperResponse, LearnerResult } from "@shared/types";
 import LearnerResultView from "./LearnerResultView";
+import LearnerEvidenceView from "./LearnerEvidenceView";
 
 const STATUS_LABEL: Record<string, string> = {
   scheduled: "Scheduled",
@@ -24,6 +25,7 @@ export default function LearnerDashboard() {
   // Assessor has signed off - the server answers 404 until then.
   const [results, setResults] = useState<Record<string, LearnerResult>>({});
   const [viewingResult, setViewingResult] = useState<LearnerResult | null>(null);
+  const [viewingEvidence, setViewingEvidence] = useState<string | null>(null);
 
   const loadSittings = useCallback(async () => {
     try {
@@ -128,6 +130,9 @@ export default function LearnerDashboard() {
 
   if (viewingResult) {
     return <LearnerResultView result={viewingResult} onBack={() => setViewingResult(null)} />;
+  }
+  if (viewingEvidence) {
+    return <LearnerEvidenceView sessionId={viewingEvidence} onBack={() => setViewingEvidence(null)} />;
   }
 
   if (activeSessionId && paper) {
@@ -252,7 +257,10 @@ export default function LearnerDashboard() {
                 <td className="py-2">{new Date(s.startTime).toLocaleString()}</td>
                 <td>{new Date(s.endTime).toLocaleString()}</td>
                 <td>{STATUS_LABEL[s.status] ?? s.status}</td>
-                <td className="py-2 text-right">
+                <td className="py-2 text-right space-x-3">
+                  {(s.status === "submitted" || s.status === "sealed") && (
+                    <button onClick={() => setViewingEvidence(s.sessionId)} className="text-xs text-ink-muted underline">What was recorded of me</button>
+                  )}
                   {s.status === "submitted" || s.status === "sealed" ? (
                     results[s.sessionId] ? (
                       <button

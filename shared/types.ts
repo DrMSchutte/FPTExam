@@ -712,3 +712,35 @@ export interface LiveConsole {
 
 export interface TimelineItem { at: string; kind: "identity_photo" | "photo" | "screen" | "incident" | "action"; blobId?: string; type?: string; detail?: string | null; by?: string | null }
 export interface EvidenceResponse { sessionId: string; timeline: TimelineItem[]; integrity: IntegritySummary | null; blobs: number }
+
+// ---- Block 8c: the evidence archive --------------------------------------------
+
+export interface ArchiveRow {
+  id: string; name: string | null; qualificationTitle: string; saqaId: string | null; paper: string; instrumentId: string; venue: string | null; cohort: string | null; assessor: string;
+  startTime: string; endTime: string; fullRecording: boolean;
+  learners: number; submitted: number; released: number; competent: number; marking: number;
+  integrity: { clear: number; review: number; investigate: number };
+  stills: { n: number; bytes: number }; recording: { n: number; bytes: number };
+  retentionUntil: string; complete: boolean; portfolioDownloads: number; portfolioLastDownloadedAt: string | null;
+}
+
+export interface RegisterLearner {
+  sessionId: string; learnerId: string; name: string; idNumberMasked: string | null; studentNumber: string | null; status: string;
+  checkInTime: string | null; startedAt: string | null; submittedAt: string | null; extraMinutes: number;
+  integrity: { recommendation: IntegrityRecommendation; headline: string; findings: number; high: number } | null;
+  result: { outcome: string; totalMark: number; totalMax: number; signedOffAt: string; statementNumber: string } | null;
+  marking: "released" | "in_progress" | "waiting" | "none";
+  stills: { n: number; bytes: number }; recording: { n: number; bytes: number }; packNumber: string;
+}
+export interface SittingRegisterResponse {
+  sitting: { id: string; name: string | null; venue: string | null; startTime: string; endTime: string; fullRecording: boolean; instrumentId: string; paper: string; qualificationTitle: string; assessor: string | null; invigilators: string[]; cohort: string | null; retentionUntil: string };
+  learners: RegisterLearner[];
+}
+
+// What the learner may see of their own sitting once submitted.
+export interface MyEvidence {
+  sessionId: string; submittedAt: string | null; startedAt: string | null; sealHash: string | null; fullRecording: boolean; segmentSeconds: number; keptUntil: string;
+  identityPhotoId: string | null;
+  captures: { id: string; kind: "photo" | "screen"; at: string }[];
+  segments: { id: string; kind: "camera" | "screen"; seq: number; startedAt: string; durationMs: number; bytes: number }[];
+}

@@ -275,8 +275,16 @@ the command-line proof. What remains for Block 7 is on Curricula Builder: expose
 export, issue the key, set the two secrets on FPT Exam, press *Test connection*.
 
 ### Block 8 — Go-live hardening (added 10 Sep 2026)
-Order agreed with Melanie: 8b full recording → 8c evidence pack and learner self-view →
+Order agreed with Melanie: 8b full recording → 8c evidence archive, packs and learner self-view →
 8d analytics → 8e automations → 8a security last (so testing is not hampered).
+
+Still to build: **8d** analytics (pass rates by cohort / qualification / paper, item analysis,
+assessor consistency against the AI suggestion, integrity rates per sitting and venue,
+time-to-mark, no-shows and non-completion; exportable); **8e** automations (assessor
+"scripts waiting" and overdue emails, invigilator "sitting tomorrow", uptime alert — needs
+SMTP; plus two job lanes so a long AI review never holds up an email or an FPTStaff push);
+**8a** security (rate limits on login / MFA / sitting entry, security headers, dependency
+audit, the 12-month evidence sweep with a hold flag, the audit-trail screen with CSV).
 
 **8b — Full recording (delivered 10 Sep 2026).** A choice on the sitting form, *Evidence
 kept*: **Stills** (as before) or **Full recording** — continuous video of the camera and
@@ -309,6 +317,59 @@ table (every outcome and criterion, status, questions, marks), the question × o
 grid, recommendations and question issues, and the question index. Branded A4,
 confidential header and footer; model answers and rubrics are never included. Every
 download is audited.
+
+**8c — Evidence archive, evidence packs and the learner's own view (delivered 10 Sep
+2026).** Melanie's question: *where do the reports live once an exam has been pulled
+through, aligned, completed and implemented — to go with the portfolio of evidence for the
+governing body?* Answer: the database is the archive, and **Evidence Archive** (new
+administrator page) is the register of it. Nothing is copied into folders: every report is
+rendered from the sealed record at the moment it is downloaded, so it can never drift from
+what was written and signed off, and every download is written to the audit trail.
+
+*Evidence Archive page.* Every sitting whose window has closed, newest first: who sat, results
+(complete / released / being marked), the integrity calls (clear / review / investigate),
+evidence held (stills or full recording, size), kept-until date, and how many times its
+portfolio has been taken. Opening a sitting shows the sitting reports (register, alignment
+matrix of the paper, the console as it was, the paper) and every learner with their
+integrity call, result, and links: **Evidence pack (PDF)**, **Files (ZIP)**, *…with video*,
+**Statement of Results**. Search and filters (complete / still being marked / fully recorded).
+
+*Portfolio of Evidence (ZIP, per sitting, administrator only).* One download for QCTO, the
+SETA, an external moderator or verifier: `00-README.txt` (contents, how to verify hashes,
+retention), `01-Sitting-Register.pdf` (landscape: qualification, paper, cohort, venue,
+staff, and per learner check-in / opened / submitted / integrity / result / statement number /
+pack number), `02-Alignment-Matrix.pdf`, `03-Question-Paper.pdf` (sections A, B, C in exam
+order), `04-Marking-Guideline.pdf` (with model answers — assessor copy), `05-Results.csv`,
+`06-Incidents.csv`, `07-Audit-Trail.csv`, and `learners/<Name - ID>/` with `Evidence-Pack.pdf`,
+`Statement-of-Results.pdf` (once released), `captures/*.jpg` (identity photo and every
+still, numbered in time order), `recording/*.webm` (only with `?video=1` — large) and
+`manifest.json` (every file with its SHA-256, the seal, the integrity call and result). The
+ZIP is streamed, so a sitting with video never has to fit in memory.
+
+*Evidence pack (PDF, per learner).* Numbered `FPT-EP-<year>-<10 chars>`. Sections: 1 the
+sitting (learner with full ID number, qualification, paper, sitting, venue, staff, evidence
+kept); 2 integrity summary (verdict box, counts, coverage, findings table by severity);
+3 consent, identity photo and device check; 4 what happened in order (every staff action,
+system and invigilator incident); 5 captures (thumbnail grid in the standalone PDF; listed
+with hashes when the ZIP carries the files); 6 full recording manifest (every segment, hash,
+sealed / after seal); 7 the seal and every capture hash, with how to re-compute it; 8 the
+result and statement number once signed off. Available from the console panel (submitted
+learners), the assessor's dossier, and the archive. Admin / the sitting's invigilators / the
+assessor of record.
+
+*Learner's own view.* The consent text promises "you may ask to see your own recordings":
+on the learner's dashboard a submitted sitting gains **What was recorded of me** — identity
+photo, every camera and screen still, the full recording minute by minute, the kept-until
+date and the seal. Only after submission, only their own, only signed in with their account
+(never with a sitting code), and never the integrity findings or marks. Viewing is audited.
+
+*Retention rule stated everywhere:* captures and recordings kept 12 months after the sitting
+unless placed on hold; statements, evidence-pack records, marks and the audit trail kept
+permanently. The sweep and the hold flag are 8a.
+
+*Also fixed:* an FPTStaff learner push that comes back with an id already held by another
+person here is recorded as a conflict (possible duplicate person) instead of retrying; the
+sample sync issues stable ids across restarts.
 
 ## Decisions taken 9 Sep 2026 (were the open decisions)
 

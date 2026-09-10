@@ -103,6 +103,15 @@ export async function runLearnerPush(payload: { userId: string }) {
   let idNumber: string | null = null;
   if (u.idNumberEnc) { try { idNumber = decryptField(u.idNumberEnc); } catch { idNumber = null; } }
   const r = await pushLearner({ examRef: u.id, name: u.name, email: u.email, idNumber, studentNumber: u.studentNumber });
+  // FPTStaff may answer with an id that another person here already holds - the
+  // same human registered twice on FPT Exam, or (in sample mode) a counter that
+  // restarted. That is a data question for the administrator, not something to
+  // retry: record it and leave both people as they are.
+  const [holder] = await db.select({ id: users.id, name: users.name }).from(users).where(eq(users.fptstaffId, r.fptstaffId));
+  if (holder && holder.id !== u.id) {
+    await db.insert(auditLog).values({ actorId: null, action: "fptstaff_learner_push_conflict", targetType: "user", targetId: u.id, reason: `FPTStaff matched ${u.name} to ${r.fptstaffId}, already linked to ${holder.name} (${holder.id}) - possible duplicate person` });
+    return { skipped: true, reason: `FPTStaff id ${r.fptstaffId} already belongs to ${holder.name}.`, fptstaffId: r.fptstaffId, conflict: true };
+  }
   await db.update(users).set({ fptstaffId: r.fptstaffId, fptstaffSyncedAt: new Date() }).where(eq(users.id, u.id));
   await db.insert(auditLog).values({ actorId: null, action: "fptstaff_learner_pushed", targetType: "user", targetId: u.id, reason: `${r.outcome} ${r.fptstaffId}` });
   return { fptstaffId: r.fptstaffId, outcome: r.outcome };
