@@ -7,7 +7,10 @@ import { learnerSessions, examSittings, users, qualifications, assessmentInstrum
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
 import { issueSessionToken } from "../auth/jwt.js";
 import { encryptField, decryptField, hashIdentifier } from "../auth/crypto.js";
-import { proctoringOf, recordIncident, submitSession, deadlineFor, captureRequestPending, SELF_RESUME_LIMIT, MIN_GAP, PHOTO_EVERY_S, SCREEN_EVERY_S, type ProctoringState } from "../proctoring/session.js";
+import { proctoringOf, recordIncident, submitSession, deadlineFor, captureRequestPending, fullRecordingOn, SEGMENT_SECONDS, SEGMENT_MAX_BYTES, SELF_RESUME_LIMIT, MIN_GAP, PHOTO_EVERY_S, SCREEN_EVERY_S, type ProctoringState } from "../proctoring/session.js";
+import { recordingSegments } from "../db/schema.js";
+import { objectStore } from "../storage/index.js";
+import express from "express";
 
 // Block 5a - the learner's way into a proctored sitting.
 //
@@ -297,6 +300,9 @@ export function roomStateOf(row: NonNullable<Awaited<ReturnType<typeof loadSitti
     // invigilator has asked for a capture now.
     notes: (p.notes ?? []).filter((n) => !n.seenAt).map((n) => ({ id: n.id, text: n.text, at: n.at })),
     captureRequested: captureRequestPending(p),
+    // Block 8b: whether this sitting is recorded in full, and the segment length.
+    fullRecording: fullRecordingOn(row.sitting.proctoringProfile),
+    segmentSeconds: SEGMENT_SECONDS,
   };
 }
 
@@ -427,6 +433,84 @@ sitRouter.post("/:id/capture", requireAuth, requireRole("learner"), async (req: 
     return res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
+
+// ---- Block 8b: full recording ------------------------------------------------------------------
+//
+//   POST /sit/:id/segment?kind=camera|screen&seq=N&startedAt=ISO&durationMs=M&pending=P   raw video/webm body
+//   GET  /sit/recording/:segmentId                                                        staff playback
+
+sitRouter.post("/:id/segment", requireAuth, requireRole("learner"), express.raw({ type: () => true, limit: SEGMENT_MAX_BYTES }), async (req: AuthedRequest, res) => {
+  const q = z.object({ kind: z.enum(["camera", "screen"]), seq: z.coerce.number().int().min(0).max(100000), startedAt: z.string().datetime(), durationMs: z.coerce.number().int().min(200).max(10 * 60 * 1000), pending: z.coerce.number().int().min(0).max(1000).optional() }).safeParse(req.query);
+  if (!q.success) return res.status(400).json({ error: "Invalid segment." });
+  const body = req.body as Buffer;
+  if (!Buffer.isBuffer(body) || body.length < 100) return res.status(400).json({ error: "Empty segment." });
+  const row = await ownSession(req, req.params.id);
+  if (!row) return res.status(404).json({ error: "Sitting not found." });
+  if (!fullRecordingOn(row.sitting.proctoringProfile)) return res.status(409).json({ error: "This sitting is not recorded in full." });
+  const open = row.session.status === "in_progress";
+  // The last segments may land just after submission (the browser flushes on
+  // submit); they are kept and marked as arriving after the seal.
+  if (!open && !(row.session.submissionTime && Date.now() - row.session.submissionTime.getTime() < 3 * 60 * 1000)) return res.status(409).json({ error: "The paper is not open." });
+  const mime = (req.get("content-type") ?? "video/webm").split(";")[0] || "video/webm";
+  const sha256 = createHash("sha256").update(body).digest("hex");
+  const key = `recordings/${row.session.id}/${q.data.kind}/${String(q.data.seq).padStart(5, "0")}.webm`;
+  const store = await objectStore();
+  await store.put(key, body);
+  const [seg] = await db
+    .insert(recordingSegments)
+    .values({ sessionId: row.session.id, kind: q.data.kind, seq: q.data.seq, startedAt: new Date(q.data.startedAt), durationMs: q.data.durationMs, bytes: body.length, mime, storageKey: key, sha256, afterSeal: !open })
+    .onConflictDoNothing()
+    .returning({ id: recordingSegments.id });
+  if (seg && open) {
+    // Part of the seal: every segment is a capture event with its hash.
+    await db.insert(captureEvents).values({ sessionId: row.session.id, type: "full_recording_chunk", storageRef: `segment:${seg.id}`, sha256Hash: sha256 });
+  }
+  const p = proctoringOf(row.session.proctoring);
+  const rec = p.recording ?? { camera: 0, screen: 0, bytes: 0 };
+  if (seg) { rec[q.data.kind] += 1; rec.bytes += body.length; }
+  rec.lastAt = new Date().toISOString();
+  rec.pending = q.data.pending ?? 0;
+  p.recording = rec;
+  p.lastSeenAt = new Date().toISOString();
+  await saveProctoring(row.session.id, p);
+  return res.json({ id: seg?.id ?? null, duplicate: !seg, recording: rec });
+});
+
+// Serve a segment to staff (administrator / the sitting's invigilator / assessor of record).
+sitRouter.get("/recording/:segmentId", requireAuth, requireRole("administrator", "invigilator", "assessor"), async (req: AuthedRequest, res) => {
+  const [seg] = await db.select().from(recordingSegments).where(eq(recordingSegments.id, req.params.segmentId));
+  if (!seg) return res.status(404).json({ error: "Not found." });
+  if (!req.auth!.roles.includes("administrator")) {
+    const [s] = await db.select({ sittingId: learnerSessions.sittingId }).from(learnerSessions).where(eq(learnerSessions.id, seg.sessionId));
+    const [sit] = s ? await db.select().from(examSittings).where(eq(examSittings.id, s.sittingId)) : [];
+    const isAssessor = sit?.assignedAssessorId === req.auth!.userId;
+    const [inv] = sit ? await db.select().from(sittingInvigilators).where(and(eq(sittingInvigilators.sittingId, sit.id), eq(sittingInvigilators.invigilatorId, req.auth!.userId))) : [];
+    if (!isAssessor && !inv) return res.status(403).json({ error: "Not your sitting." });
+  }
+  const store = await objectStore();
+  const bytes = await store.get(seg.storageKey);
+  if (!bytes) return res.status(410).json({ error: "This segment has been deleted under the retention rule." });
+  res.setHeader("Content-Type", seg.mime);
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  res.setHeader("Accept-Ranges", "bytes");
+  const range = req.get("range");
+  if (range) {
+    const m = /bytes=(\d*)-(\d*)/.exec(range);
+    const start = m && m[1] ? Number(m[1]) : 0;
+    const end = m && m[2] ? Math.min(Number(m[2]), bytes.length - 1) : bytes.length - 1;
+    res.status(206);
+    res.setHeader("Content-Range", `bytes ${start}-${end}/${bytes.length}`);
+    res.setHeader("Content-Length", String(end - start + 1));
+    return res.end(bytes.subarray(start, end + 1));
+  }
+  res.setHeader("Content-Length", String(bytes.length));
+  return res.end(bytes);
+});
+
+export async function segmentsFor(sessionId: string) {
+  const rows = await db.select().from(recordingSegments).where(eq(recordingSegments.sessionId, sessionId)).orderBy(recordingSegments.kind, recordingSegments.seq);
+  return rows.map((r) => ({ id: r.id, kind: r.kind as "camera" | "screen", seq: r.seq, startedAt: r.startedAt.toISOString(), durationMs: r.durationMs, bytes: r.bytes, afterSeal: r.afterSeal }));
+}
 
 // ---- Staff: resume a locked paper, submit on the learner's behalf, extra time --------------
 

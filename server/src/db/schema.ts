@@ -441,6 +441,30 @@ export const evidenceBlobs = pgTable(
   (t) => ({ sessionIdx: index("idx_evidence_blobs_session").on(t.sessionId) })
 );
 
+// Block 8b: full recording - self-contained one-minute video segments of the
+// camera and the screen, uploaded as the sitting runs. Bytes live in object
+// storage (storage/index.ts); this row is the index and the hash.
+export const recordingSegments = pgTable(
+  "recording_segments",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    sessionId: uuid("session_id").notNull().references(() => learnerSessions.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(), // camera | screen
+    seq: integer("seq").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    bytes: integer("bytes").notNull(),
+    mime: text("mime").notNull(),
+    storageKey: text("storage_key").notNull(),
+    sha256: text("sha256").notNull(),
+    afterSeal: boolean("after_seal").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    sessionSeq: uniqueIndex("uq_recording_segments_session_kind_seq").on(t.sessionId, t.kind, t.seq),
+  })
+);
+
 export const incidentLog = pgTable("incident_log", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   sessionId: uuid("session_id")

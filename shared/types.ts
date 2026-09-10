@@ -396,6 +396,7 @@ export interface SittingListRow extends ExamSitting {
   cohortName: string | null;
   assessorName: string;
   learners: number;
+  fullRecording?: boolean;
 }
 
 export interface LearnerSittingSummary {
@@ -624,6 +625,7 @@ export interface IntegritySummary {
   identityPhoto: boolean;
   submittedBy: "learner" | "time_up" | "invigilator" | "unknown";
   writingMinutes: number;
+  recording?: { camera: number; screen: number; expected: number; bytes: number } | null;
   generatedAt: string;
 }
 
@@ -689,12 +691,16 @@ export interface LiveLearner {
   sealHash: string | null;
   attention: "red" | "amber" | null;
   attentionReasons: string[];
+  recording: { camera: number; screen: number; pending: number; lastAt: string | null; bytes: number; latestCamera: RecordingSegmentRef | null; latestScreen: RecordingSegmentRef | null } | null;
 }
+export interface RecordingSegmentRef { id: string; startedAt: string; durationMs: number }
+export interface RecordingSegment extends RecordingSegmentRef { kind: "camera" | "screen"; seq: number; bytes: number; afterSeal: boolean }
+export interface RecordingResponse { sessionId: string; fullRecording: boolean; segmentSeconds: number; startedAt: string | null; submittedAt: string | null; segments: RecordingSegment[]; totalBytes: number }
 
 export interface LiveAlert { id: string; sessionId: string; learnerId: string | null; learnerName: string; type: string; at: string; detail: string | null; by: string }
 
 export interface LiveConsole {
-  sitting: { id: string; name: string; qualificationTitle: string; paper: string; minutes: number; venue: string | null; startTime: string; endTime: string; invigilators: { id: string; name: string }[] };
+  sitting: { id: string; name: string; qualificationTitle: string; paper: string; minutes: number; venue: string | null; startTime: string; endTime: string; invigilators: { id: string; name: string }[]; fullRecording: boolean; segmentSeconds: number };
   serverTime: string;
   counts: { total: number; scheduled: number; checkedIn: number; writing: number; locked: number; needsYou: number; submitted: number };
   manualIncidentTypes: { code: string; title: string; severity: IntegritySeverity }[];

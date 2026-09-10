@@ -28,6 +28,8 @@ interface RoomState {
   sealHash: string | null;
   notes: { id: string; text: string; at: string }[];
   captureRequested: boolean;
+  fullRecording: boolean;
+  segmentSeconds: number;
 }
 interface RoomResponse { room: RoomState; learner: { name: string }; sitting: { name: string; qualificationTitle: string; paper: string; minutes: number; permittedMaterials: string[] } }
 type Paper = PaperResponse & { deadline: string; serverTime: string; startedAt: string | null; locked: boolean; requiresInvigilator: boolean; status: string };
@@ -57,6 +59,52 @@ export default function ExamRoom() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const armed = useRef(false); // detection on only while writing
   const lockedRef = useRef(false);
+  // Block 8b: full recording - one self-contained segment per stream per minute,
+  // uploaded as it is made; a queue holds segments while the connection is busy.
+  const recorders = useRef<{ camera?: MediaRecorder; screen?: MediaRecorder }>({});
+  const segSeq = useRef({ camera: 0, screen: 0 });
+  const uploadQueue = useRef<{ kind: "camera" | "screen"; seq: number; startedAt: string; durationMs: number; blob: Blob; tries: number }[]>([]);
+  const uploading = useRef(false);
+  const recordingOn = useRef(false);
+
+  const pumpUploads = useCallback(async () => {
+    if (uploading.current || !id) return;
+    uploading.current = true;
+    try {
+      while (uploadQueue.current.length) {
+        const item = uploadQueue.current[0];
+        const pending = uploadQueue.current.length - 1;
+        const res = await fetch(`/api/sit/${id}/segment?kind=${item.kind}&seq=${item.seq}&startedAt=${encodeURIComponent(item.startedAt)}&durationMs=${item.durationMs}&pending=${pending}`, { method: "POST", credentials: "include", headers: { "Content-Type": item.blob.type || "video/webm" }, body: item.blob }).catch(() => null);
+        if (res && (res.ok || res.status === 409 || res.status === 400)) uploadQueue.current.shift();
+        else { item.tries += 1; if (item.tries > 20) uploadQueue.current.shift(); else { await new Promise((r) => setTimeout(r, 4000)); } }
+      }
+    } finally { uploading.current = false; }
+  }, [id]);
+
+  const startSegment = useCallback((kind: "camera" | "screen", stream: MediaStream, seconds: number) => {
+    if (!recordingOn.current || typeof MediaRecorder === "undefined") return;
+    const mime = ["video/webm;codecs=vp8", "video/webm"].find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
+    let rec: MediaRecorder;
+    try { rec = new MediaRecorder(stream, { mimeType: mime || undefined, videoBitsPerSecond: kind === "camera" ? 250_000 : 400_000 }); } catch { return; }
+    const startedAt = new Date().toISOString();
+    const seq = segSeq.current[kind]++;
+    const chunks: Blob[] = [];
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = () => {
+      const blob = new Blob(chunks, { type: mime || "video/webm" });
+      if (blob.size > 1000) { uploadQueue.current.push({ kind, seq, startedAt, durationMs: Date.now() - new Date(startedAt).getTime(), blob, tries: 0 }); void pumpUploads(); }
+      // Next segment while the stream is still live and the paper still open.
+      if (recordingOn.current && stream.active) startSegment(kind, stream, seconds);
+    };
+    rec.start();
+    recorders.current[kind] = rec;
+    setTimeout(() => { if (rec.state === "recording") rec.stop(); }, seconds * 1000);
+  }, [pumpUploads]);
+
+  const stopRecording = useCallback(() => {
+    recordingOn.current = false;
+    for (const k of ["camera", "screen"] as const) { const r = recorders.current[k]; if (r && r.state === "recording") r.stop(); }
+  }, []);
 
   // ---- load ----
   useEffect(() => {
@@ -183,6 +231,13 @@ export default function ExamRoom() {
       setPaper(p); setAnswers(Object.fromEntries(Object.entries(p.existingAnswers ?? {}).map(([k, v]) => [k, String(v ?? "")])));
       setSkew(new Date(p.serverTime).getTime() - Date.now());
       setPhase("writing");
+      // Block 8b: full recording, when the sitting asks for it.
+      if (room?.fullRecording) {
+        recordingOn.current = true;
+        const secs = room.segmentSeconds || 60;
+        if (camRef.current) startSegment("camera", camRef.current, secs);
+        if (screenRef.current) startSegment("screen", screenRef.current, secs);
+      }
     } catch (e) { setError((e as Error).message); }
   }
 
@@ -202,6 +257,8 @@ export default function ExamRoom() {
     try {
       if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
       await api.post(`/sessions/${id}/answers`, { answers }).catch(() => {});
+      // Full recording: close the current segments and give them a moment to queue.
+      if (recordingOn.current) { stopRecording(); await new Promise((r) => setTimeout(r, 800)); void pumpUploads(); }
       await api.post(`/sessions/${id}/submit`);
       const r = await api.get<RoomResponse>(`/sit/${id}/room`).catch(() => null);
       if (r) setRoom(r.room);
@@ -210,7 +267,7 @@ export default function ExamRoom() {
       camRef.current?.getTracks().forEach((t) => t.stop()); screenRef.current?.getTracks().forEach((t) => t.stop());
       await document.exitFullscreen?.().catch(() => {});
     } catch (e) { if (!auto) setError((e as Error).message); }
-  }, [id, answers]);
+  }, [id, answers, stopRecording, pumpUploads]);
 
   // ---- clock ----
   const deadline = paper ? new Date(paper.deadline).getTime() : room ? new Date(room.deadline).getTime() : 0;
@@ -259,8 +316,8 @@ export default function ExamRoom() {
             <p>When you press <strong>Begin</strong>, three things happen, in this order:</p>
             <ol className="list-decimal pl-5 space-y-1.5">
               <li>The exam goes <strong>full screen</strong>. Stay in it — leaving locks your paper and alerts your invigilator.</li>
-              <li>Your <strong>camera</strong> switches on and stays on. A photo is taken every {room.cadence.photoEverySeconds} seconds.</li>
-              <li>Your browser asks you to <strong>share your screen</strong>: choose <em>Entire screen</em>. A screen still is taken every {Math.round(room.cadence.screenEverySeconds / 60)} minutes.</li>
+              <li>Your <strong>camera</strong> switches on and stays on. {room.fullRecording ? "The camera is recorded for the whole sitting, and a photo is taken every " : "A photo is taken every "}{room.cadence.photoEverySeconds} seconds.</li>
+              <li>Your browser asks you to <strong>share your screen</strong>: choose <em>Entire screen</em>. {room.fullRecording ? "Your screen is recorded for the whole sitting, and a" : "A"} screen still is taken every {Math.round(room.cadence.screenEverySeconds / 60)} minutes.</li>
             </ol>
             <p className="text-ink-muted">One question at a time; your answers save as you type; you can move back and forth. Copying and pasting are switched off. The clock starts the moment the paper opens{room.startedAt ? " (it already has)" : ""}.</p>
             {error && <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">{error}</p>}
@@ -314,7 +371,7 @@ export default function ExamRoom() {
             <div><span className="inline-block h-2.5 w-2.5 rounded-sm border border-line mr-1.5" />not yet</div>
           </div>
           <div className="mt-6 text-[11.5px] text-ink-faint">
-            <div className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-brand-500 animate-pulse" /> Camera on{screenSurface === "monitor" || screenSurface === "unknown" ? " · screen shared" : ""}</div>
+            <div className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-brand-500 animate-pulse" /> Camera on{screenSurface === "monitor" || screenSurface === "unknown" ? " · screen shared" : ""}{room.fullRecording ? " · recording" : ""}</div>
           </div>
         </aside>
 

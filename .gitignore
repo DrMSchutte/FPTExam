@@ -8,3 +8,6 @@ build
 # The Claude desktop app writes session outputs (screenshots etc.) here; not part of the app.
 Claude outputs/
 *.bundle
+
+# Block 8b: recordings kept on the local filesystem when object storage is not configured
+server/data/

@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import type { Dossier, QuestionMark, SuggestionReview, AiQuestionSuggestion, Outcome, EvidenceResponse } from "@shared/types";
 import { PageHeader, Card, CardHead, Notice, Badge, TypePill } from "../../components/ui";
-import { IntegrityBadge, Timeline } from "../invigilator/LiveConsole";
+import { IntegrityBadge, Timeline, RecordingPlayer } from "../invigilator/LiveConsole";
 
 const fmt = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -634,6 +634,7 @@ export default function AssessorDossier() {
 function IntegrityCard({ dossier }: { dossier: Dossier }) {
   const ig = dossier.integrity;
   const [open, setOpen] = useState(false);
+  const [video, setVideo] = useState(false);
   const [evidence, setEvidence] = useState<EvidenceResponse | null>(null);
   useEffect(() => {
     if (open && !evidence) api.get<EvidenceResponse>(`/sittings/${dossier.sitting.id}/learners/${dossier.learner.id}/evidence`).then(setEvidence).catch(() => setEvidence(null));
@@ -657,10 +658,14 @@ function IntegrityCard({ dossier }: { dossier: Dossier }) {
               {flagged.map((f) => <li key={f.code} className="flex gap-2"><span className={"mt-1.5 h-2 w-2 rounded-full shrink-0 " + (f.severity === "high" ? "bg-red-500" : f.severity === "medium" ? "bg-amber-400" : "bg-blue-300")} /><span><span className="font-semibold">{f.title}.</span> <span className="text-ink-muted">{f.detail}</span></span></li>)}
             </ul>
           )}
-          <button type="button" className="lnk mt-2" onClick={() => setOpen(!open)}>{open ? "Hide the evidence" : "See the evidence — photos, screens and every event"}</button>
+          <div className="flex items-center gap-4 mt-2">
+            <button type="button" className="lnk" onClick={() => setOpen(!open)}>{open ? "Hide the evidence" : "See the evidence — photos, screens and every event"}</button>
+            {ig.recording && <button type="button" className="lnk" onClick={() => setVideo(!video)}>{video ? "Hide the recording" : `Watch the recording — ${ig.recording.camera} min`}</button>}
+          </div>
         </div>
       </div>
       {open && <div className="border-t border-line p-5 bg-surface">{evidence ? <Timeline e={evidence} showIntegrity={false} /> : <p className="t-sub">Loading the evidence…</p>}</div>}
+      {video && <div className="border-t border-line p-5 bg-surface"><RecordingPlayer sittingId={dossier.sitting.id} learnerId={dossier.learner.id} /></div>}
     </Card>
   );
 }

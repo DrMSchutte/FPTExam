@@ -59,6 +59,7 @@ export default function AdminSittings() {
   const [sitIndependent, setSitIndependent] = useState(false);
   const [sitVenue, setSitVenue] = useState("");
   const [sitCapacity, setSitCapacity] = useState("");
+  const [sitFullRecording, setSitFullRecording] = useState(false);
   const [creating, setCreating] = useState(false);
 
   const chosenCohort = cohorts.find((c) => c.id === sitCohortId);
@@ -92,6 +93,7 @@ export default function AdminSittings() {
         name: sitName || undefined,
         venue: sitVenue || undefined,
         capacity: sitCapacity ? Number(sitCapacity) : undefined,
+        proctoringProfile: { fullRecordingEnabled: sitFullRecording },
         startTime: new Date(sitStart).toISOString(),
         endTime: new Date(sitEnd).toISOString(),
         assignedAssessorId: sitAssessorId,
@@ -224,6 +226,18 @@ export default function AdminSittings() {
               <div><label className="field-lbl">End</label><input className="inp" type="datetime-local" value={sitEnd} onChange={(e) => setSitEnd(e.target.value)} required /></div>
               <div><label className="field-lbl">Venue / room <span className="normal-case font-normal text-ink-faint">— optional</span></label><input className="inp" value={sitVenue} onChange={(e) => setSitVenue(e.target.value)} placeholder="e.g. Durban Lab 2" /></div>
               <div><label className="field-lbl">Seats <span className="normal-case font-normal text-ink-faint">— optional</span></label><input className="inp tabular" type="number" min={1} value={sitCapacity} onChange={(e) => setSitCapacity(e.target.value)} placeholder="room capacity" /></div>
+              <div className="col-span-2">
+                <label className="field-lbl">Evidence kept</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {([[false, "Stills", "Camera photo every 45 s, screen still every 2 min, flagged captures. Light on the venue's connection."], [true, "Full recording", "Continuous video of camera and screen for the whole sitting, plus the stills. About 1 GB per learner per 3 hours; needs a solid venue connection (roughly 25 Mbps up for 30 learners)."]] as [boolean, string, string][]).map(([v, t, d]) => (
+                    <button key={t} type="button" onClick={() => setSitFullRecording(v)} className={"rounded-lg border px-3 py-2 text-left " + (sitFullRecording === v ? "border-brand-600 bg-brand-50" : "border-line hover:bg-surface-2")}>
+                      <div className="font-display font-semibold text-[13px]">{t}</div>
+                      <div className="t-sub">{d}</div>
+                    </button>
+                  ))}
+                </div>
+                <p className="t-sub mt-1">Every sitting is fully invigilated either way; this is only how much is kept as evidence.</p>
+              </div>
               <div>
                 <label className="field-lbl">Assessor <span className="normal-case font-normal text-ink-faint">— scripts in flight / cap</span></label>
                 <select className="inp" value={sitAssessorId} onChange={(e) => setSitAssessorId(e.target.value)} required>
@@ -284,7 +298,7 @@ export default function AdminSittings() {
                     <tr className={openId === s.id ? "bg-brand-50/30" : ""}>
                       <td>
                         <div className="font-semibold">{s.name ?? s.qualificationTitle}</div>
-                        <div className="t-sub">{s.name ? s.qualificationTitle + " · " : ""}{typeWord(qualifications.find((q) => q.id === s.qualificationId)?.qctoRegistrationType)}{s.venue ? ` · ${s.venue}` : ""}{s.capacity ? ` · ${s.capacity} seats` : ""}</div>
+                        <div className="t-sub">{s.name ? s.qualificationTitle + " · " : ""}{typeWord(qualifications.find((q) => q.id === s.qualificationId)?.qctoRegistrationType)}{s.venue ? ` · ${s.venue}` : ""}{s.capacity ? ` · ${s.capacity} seats` : ""}{s.fullRecording ? " · full recording" : ""}</div>
                       </td>
                       <td>{s.cohortId ? <Link to={`/admin/cohorts/${s.cohortId}`} className="lnk">{s.cohortName}</Link> : <span className="text-ink-faint">—</span>}</td>
                       <td>{fmt(s.startTime)} <span className="text-ink-faint">→</span> {fmt(s.endTime)}</td>

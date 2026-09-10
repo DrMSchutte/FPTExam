@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import { Badge, Notice } from "../../components/ui";
-import type { LiveConsole as LiveConsoleData, LiveLearner, LiveAlert, EvidenceResponse, IntegritySummary } from "@shared/types";
+import type { LiveConsole as LiveConsoleData, LiveLearner, LiveAlert, EvidenceResponse, IntegritySummary, RecordingResponse, RecordingSegment } from "@shared/types";
 
 // Block 5c: the invigilator console - the live view of one sitting.
 //
@@ -275,7 +275,8 @@ function LearnerPanel({ l, sittingId, now, act, incidentTypes, watch, setWatch, 
   incidentTypes: { code: string; title: string; severity: string }[];
   watch: boolean; setWatch: (v: boolean) => void; onClose: () => void;
 }) {
-  const [mode, setMode] = useState<"actions" | "note" | "time" | "incident" | "end" | "evidence">("actions");
+  const [mode, setMode] = useState<"actions" | "note" | "time" | "incident" | "end" | "evidence" | "recording">("actions");
+  const [liveVideo, setLiveVideo] = useState(false);
   const [text, setText] = useState("");
   const [mins, setMins] = useState("10");
   const [reason, setReason] = useState("");
@@ -300,12 +301,29 @@ function LearnerPanel({ l, sittingId, now, act, incidentTypes, watch, setWatch, 
         <button type="button" className="lnk" onClick={onClose}>Close</button>
       </div>
 
-      {/* live pictures */}
+      {/* live pictures - or, on a fully recorded sitting, the newest minute of video */}
       <div className={"grid gap-1 p-2 bg-[#1B2A22] " + (watch ? "grid-cols-1" : "grid-cols-2")}>
-        <Still id={l.latestPhotoId ?? l.identityPhotoId} at={l.lastPhotoAt} caption={l.latestPhotoId ? "Camera" : l.identityPhotoId ? "Identity photo (no capture yet)" : "Camera"} tall={watch} />
-        <Still id={l.latestScreenId} at={l.lastScreenAt} caption={l.screenShare && l.screenShare !== "monitor" ? `Screen · ${l.screenShare === "none" || l.screenShare === "unsupported" ? "not shared" : "only a " + l.screenShare}` : "Screen"} tall={watch} />
+        {liveVideo && l.recording?.latestCamera ? (
+          <LiveSegment seg={l.recording.latestCamera} caption="Camera · newest minute" tall={watch} />
+        ) : (
+          <Still id={l.latestPhotoId ?? l.identityPhotoId} at={l.lastPhotoAt} caption={l.latestPhotoId ? "Camera" : l.identityPhotoId ? "Identity photo (no capture yet)" : "Camera"} tall={watch} />
+        )}
+        {liveVideo && l.recording?.latestScreen ? (
+          <LiveSegment seg={l.recording.latestScreen} caption="Screen · newest minute" tall={watch} />
+        ) : (
+          <Still id={l.latestScreenId} at={l.lastScreenAt} caption={l.screenShare && l.screenShare !== "monitor" ? `Screen · ${l.screenShare === "none" || l.screenShare === "unsupported" ? "not shared" : "only a " + l.screenShare}` : "Screen"} tall={watch} />
+        )}
         {l.identityPhotoId && l.latestPhotoId && <Still id={l.identityPhotoId} at={l.checkInTime} caption="Identity photo at check-in" small />}
       </div>
+      {l.recording && (
+        <div className="flex items-center gap-3 px-4 py-1.5 border-b border-line text-[12px] bg-surface-2">
+          <span className={"h-2 w-2 rounded-full " + (l.recording.lastAt && now - new Date(l.recording.lastAt).getTime() < 150_000 ? "bg-red-500 animate-pulse" : writing ? "bg-amber-400" : "bg-ink-faint")} />
+          <span className="font-semibold">Full recording</span>
+          <span className="t-sub">{l.recording.camera} min camera · {l.recording.screen} min screen · {Math.round(l.recording.bytes / 1048576)} MB{l.recording.pending ? ` · ${l.recording.pending} waiting to upload` : ""}{l.recording.lastAt ? ` · last ${hhmm(l.recording.lastAt)}` : ""}</span>
+          <span className="flex-1" />
+          {(l.recording.latestCamera || l.recording.latestScreen) && <button type="button" className="lnk text-[12px]" onClick={() => setLiveVideo(!liveVideo)}>{liveVideo ? "Show stills" : "Watch video (1 min behind)"}</button>}
+        </div>
+      )}
       <div className="flex items-center gap-3 px-4 py-2 border-b border-line text-[12.5px]">
         <button type="button" className="lnk" onClick={() => setWatch(!watch)}>{watch ? "Smaller" : "Watch large"}</button>
         {writing && <button type="button" className="lnk" disabled={busy || l.captureRequested} onClick={() => run("request-capture", {}, `Asked ${l.name}'s browser for a photo and screen now.`)}>{l.captureRequested ? "Capture requested…" : "Capture now"}</button>}
@@ -340,7 +358,8 @@ function LearnerPanel({ l, sittingId, now, act, incidentTypes, watch, setWatch, 
             {(writing || l.status === "checked_in") && <button type="button" className="btn-ghost" onClick={() => setMode("incident")}>Record what I see</button>}
             {writing && <button type="button" className="btn-ghost text-red-700 border-red-200 hover:bg-red-50" onClick={() => setMode("end")}>End the paper</button>}
             {l.codeIssued && l.entries > 0 && !l.reentryAllowed && !done && <button type="button" className="btn-ghost" disabled={busy} onClick={() => run("allow-reentry", {}, `${l.name} may enter their code once more.`)}>Allow re-entry</button>}
-            <button type="button" className="btn-ghost col-span-2" onClick={() => setMode("evidence")}>Evidence timeline{l.incidents ? ` · ${l.incidents} incident${l.incidents === 1 ? "" : "s"}` : ""}</button>
+            <button type="button" className={"btn-ghost " + (l.recording ? "" : "col-span-2")} onClick={() => setMode("evidence")}>Evidence timeline{l.incidents ? ` · ${l.incidents} incident${l.incidents === 1 ? "" : "s"}` : ""}</button>
+            {l.recording && <button type="button" className="btn-ghost" onClick={() => setMode("recording")}>Recording · {l.recording.camera} min</button>}
           </div>
         )}
         {mode === "note" && (
@@ -378,6 +397,12 @@ function LearnerPanel({ l, sittingId, now, act, incidentTypes, watch, setWatch, 
             {evidence ? <Timeline e={evidence} /> : <p className="t-sub">Loading…</p>}
           </div>
         )}
+        {mode === "recording" && (
+          <div>
+            <div className="flex items-center justify-between mb-2"><span className="font-display font-semibold text-[13.5px]">Recording</span><button type="button" className="lnk" onClick={() => setMode("actions")}>Back</button></div>
+            <RecordingPlayer sittingId={sittingId} learnerId={l.learnerId} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -402,6 +427,54 @@ function Form({ title, hint, children, onCancel, onOk, okLabel, busy, disabled, 
         <button type="button" className="btn-ghost btn-sm" onClick={onCancel}>Cancel</button>
         <button type="button" className={"btn btn-sm " + (danger ? "!bg-red-600 hover:!bg-red-700" : "")} disabled={busy || disabled} onClick={onOk}>{okLabel}</button>
       </div>
+    </div>
+  );
+}
+
+// The newest one-minute segment, replayed as it lands: a live view about a minute behind.
+function LiveSegment({ seg, caption, tall }: { seg: { id: string; startedAt: string; durationMs: number }; caption: string; tall?: boolean }) {
+  return (
+    <figure className={"relative bg-black rounded overflow-hidden " + (tall ? "aspect-video" : "aspect-[4/3]")}>
+      <video key={seg.id} src={`/api/sit/recording/${seg.id}`} autoPlay muted playsInline loop className="h-full w-full object-contain" />
+      <figcaption className="absolute inset-x-0 bottom-0 bg-black/55 text-white/85 text-[10.5px] px-1.5 py-0.5 flex justify-between"><span>{caption}</span><span className="tabular">{hhmm(seg.startedAt)}</span></figcaption>
+    </figure>
+  );
+}
+
+// The whole recording of one learner's sitting: pick a minute, both streams play side by side.
+export function RecordingPlayer({ sittingId, learnerId }: { sittingId: string; learnerId: string }) {
+  const [rec, setRec] = useState<RecordingResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [minute, setMinute] = useState(0);
+  useEffect(() => { api.get<RecordingResponse>(`/sittings/${sittingId}/learners/${learnerId}/recording`).then(setRec).catch((e) => setError((e as Error).message)); }, [sittingId, learnerId]);
+  if (error) return <Notice kind="error">{error}</Notice>;
+  if (!rec) return <p className="t-sub">Loading the recording…</p>;
+  if (!rec.fullRecording) return <p className="t-sub">This sitting was kept as stills only.</p>;
+  const cams = rec.segments.filter((x) => x.kind === "camera"), scrs = rec.segments.filter((x) => x.kind === "screen");
+  const t0 = rec.startedAt ? new Date(rec.startedAt).getTime() : cams[0] ? new Date(cams[0].startedAt).getTime() : 0;
+  const lastEnd = rec.segments.reduce((m, x) => Math.max(m, new Date(x.startedAt).getTime() + x.durationMs), t0);
+  const minutes = Math.max(1, Math.ceil((lastEnd - t0) / 60000));
+  const at = t0 + minute * 60000 + 1000;
+  const pick = (list: RecordingSegment[]) => list.find((x) => { const s = new Date(x.startedAt).getTime(); return at >= s && at < s + x.durationMs + 1500; }) ?? null;
+  const cam = pick(cams), scr = pick(scrs);
+  if (!rec.segments.length) return <p className="t-sub">No video has arrived for this sitting yet.</p>;
+  return (
+    <div className="space-y-2 text-[13px]">
+      <div className="grid grid-cols-2 gap-1 bg-[#1B2A22] p-1 rounded">
+        {[["Camera", cam], ["Screen", scr]].map(([label, seg]) => (
+          <figure key={label as string} className="relative aspect-[4/3] bg-black rounded overflow-hidden">
+            {seg ? <video key={(seg as RecordingSegment).id} src={`/api/sit/recording/${(seg as RecordingSegment).id}`} controls autoPlay muted playsInline className="h-full w-full object-contain" /> : <div className="h-full w-full grid place-items-center text-white/40 text-[11.5px]">no {String(label).toLowerCase()} for this minute</div>}
+            <figcaption className="absolute top-0 left-0 bg-black/55 text-white/85 text-[10.5px] px-1.5 py-0.5">{label as string}{seg ? ` · ${hhmm((seg as RecordingSegment).startedAt)}${(seg as RecordingSegment).afterSeal ? " · after submission" : ""}` : ""}</figcaption>
+          </figure>
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        <button type="button" className="btn-ghost btn-sm" disabled={minute <= 0} onClick={() => setMinute(minute - 1)}>◀</button>
+        <input type="range" min={0} max={minutes - 1} value={minute} onChange={(e) => setMinute(Number(e.target.value))} className="flex-1 accent-brand-600" />
+        <button type="button" className="btn-ghost btn-sm" disabled={minute >= minutes - 1} onClick={() => setMinute(minute + 1)}>▶</button>
+        <span className="tabular t-sub w-[120px] text-right">minute {minute + 1} of {minutes} · {hhmm(new Date(at).toISOString())}</span>
+      </div>
+      <p className="t-sub">{cams.length} min camera · {scrs.length} min screen · {Math.round(rec.totalBytes / 1048576)} MB{rec.submittedAt ? ` · submitted ${hhmm(rec.submittedAt)}` : ""}. Gaps show as "no camera for this minute" — the browser was offline or the paper was locked.</p>
     </div>
   );
 }

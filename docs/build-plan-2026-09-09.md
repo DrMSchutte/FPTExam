@@ -274,6 +274,30 @@ the four mapping points to fill in from Curricula Builder's data model, key issu
 the command-line proof. What remains for Block 7 is on Curricula Builder: expose the
 export, issue the key, set the two secrets on FPT Exam, press *Test connection*.
 
+### Block 8 — Go-live hardening (added 10 Sep 2026)
+Order agreed with Melanie: 8b full recording → 8c evidence pack and learner self-view →
+8d analytics → 8e automations → 8a security last (so testing is not hampered).
+
+**8b — Full recording (delivered 10 Sep 2026).** A choice on the sitting form, *Evidence
+kept*: **Stills** (as before) or **Full recording** — continuous video of the camera and
+the screen for the whole sitting, in addition to the stills. Every sitting stays fully
+invigilated; this is only how much is kept as evidence. The browser records self-contained
+one-minute segments per stream (camera ~250 kbps, screen ~400 kbps) and uploads each as it
+is made; a queue holds segments while the connection is busy and the console shows
+*uploads behind* or *recording not arriving* in amber. Segments are hashed and become part
+of the seal; the last ones flushed at submission are kept and marked *after submission*.
+Bytes go to object storage — `RECORDINGS_STORAGE=replit` for Replit App Storage (the bucket
+attached to the Repl, no secrets), otherwise the server's disk under `server/data/recordings`
+(development and small venues only). Measured in a real browser: about 1 MB per minute for
+both streams together (roughly 180 MB per learner-hour with a real webcam), so a
+three-hour paper is about 0.5–1 GB per learner and a 30-learner room needs roughly
+15–25 Mbps upstream for the sitting. The console gains **Watch video** (the newest minute
+of camera and screen, about a minute behind) and **Recording** — a minute-by-minute player
+of the whole sitting, both streams side by side; the assessor's dossier has *Watch the
+recording*; playback is admin / the sitting's invigilators / the assessor of record only,
+audited. The integrity engine measures recording coverage (segments against minutes
+written) and the Statement of Results states "recorded in full".
+
 ## Decisions taken 9 Sep 2026 (were the open decisions)
 
 *Added 10 Sep 2026:* **the shape of a paper.** A Final Integrated Summative Assessment is an

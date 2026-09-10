@@ -197,7 +197,7 @@ paper, and the evidence timeline. Administrators open the same console from the 
 | Structured paper + rubric | While the paper is live; archive after | Rubric never sent to a learner browser; paper served question-by-question in session |
 | People: name, email, role, FPTStaff ref, supervisory login + MFA secret | While active | Learner ID number and unique student number (decision 9 Sep 2026: required on the Statement of Results) stored **encrypted**, masked on screen, printed in full only on the Statement; captured at registration, pulled from FPTStaff once connected |
 | Exam record: session, answers, marks, feedback, outcome, sign-off, audit | Permanent | Seal hash on submission makes it tamper-evident |
-| Proctoring evidence (captures, recordings, incidents) | 12 months after the sitting, then auto-delete; hold flag for appeals/investigations | Learner may view their own; never leaves FPT Exam; window stated in consent text |
+| Proctoring evidence (captures, recordings, incidents) | 12 months after the sitting, then auto-delete; hold flag for appeals/investigations | Learner may view their own; never leaves FPT Exam; window stated in consent text. Stills in the database; full-recording video in object storage (Replit App Storage), per-sitting choice (Block 8b) |
 | QA process, full profiles, payments, contracts | Never | Lives in FPTStaff |
 
 ## 5. Order of work

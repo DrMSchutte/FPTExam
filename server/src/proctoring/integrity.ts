@@ -1,7 +1,7 @@
 import { asc, eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { learnerSessions, examSittings, assessmentInstruments, incidentLog, captureEvents, auditLog, aiIntegrityReports, users } from "../db/schema.js";
-import { proctoringOf, PHOTO_EVERY_S, SCREEN_EVERY_S, SELF_RESUME_LIMIT } from "./session.js";
+import { proctoringOf, PHOTO_EVERY_S, SCREEN_EVERY_S, SELF_RESUME_LIMIT, SEGMENT_SECONDS, fullRecordingOn } from "./session.js";
 
 // Block 5c: the integrity summary. Computed the moment a paper is submitted
 // (by the learner, by the clock or by the invigilator) from everything the
@@ -44,6 +44,8 @@ export interface IntegritySummary {
   identityPhoto: boolean;
   submittedBy: "learner" | "time_up" | "invigilator" | "unknown";
   writingMinutes: number;
+  // Block 8b: full recording - null when the sitting was stills-only.
+  recording: { camera: number; screen: number; expected: number; bytes: number } | null;
   generatedAt: string;
 }
 
@@ -113,6 +115,19 @@ export async function buildIntegritySummary(sessionId: string): Promise<Integrit
     else if (photoCover < 0.8) add("camera_thin", "low", "Camera evidence thinner than expected", `${p.photos} photos against about ${photosExpected} expected.`);
     if ((p.screenShare === "monitor" || p.screenShare === "window" || p.screenShare === "browser") && screenCover < 0.5) add("screen_gaps", "medium", "Gaps in screen evidence", `${p.screens} screen still${p.screens === 1 ? "" : "s"} against about ${screensExpected} expected.`);
   }
+  // Full recording coverage (Block 8b)
+  const recordingOn = fullRecordingOn(row.sitting.proctoringProfile);
+  const expectedSegments = Math.max(1, Math.floor(writingSeconds / SEGMENT_SECONDS));
+  const rec = p.recording;
+  if (recordingOn) {
+    const cam = rec?.camera ?? 0, scr = rec?.screen ?? 0;
+    if (writingMinutes >= 3) {
+      if (cam / expectedSegments < 0.5) add("recording_gaps", "medium", "Gaps in the camera recording", `${cam} minute-segment${cam === 1 ? "" : "s"} against about ${expectedSegments} expected.`);
+      else if (cam / expectedSegments < 0.85) add("recording_thin", "low", "Camera recording incomplete", `${cam} segments against about ${expectedSegments} expected.`);
+      else add("fully_recorded", "info", "Sitting recorded in full", `${cam} minutes of camera and ${scr} minutes of screen video kept.`);
+      if (scr / expectedSegments < 0.5) add("screen_recording_gaps", "medium", "Gaps in the screen recording", `${scr} segments against about ${expectedSegments} expected.`);
+    } else add("fully_recorded", "info", "Sitting recorded in full", `${cam} minutes of camera and ${scr} minutes of screen video kept.`);
+  }
   if ((p.cameraLost ?? 0) > 0) add("camera_lost", (p.cameraLost ?? 0) >= 2 ? "medium" : "low", "Camera stopped during the sitting", `${p.cameraLost} time${p.cameraLost === 1 ? "" : "s"}.`, p.cameraLost);
 
   // Browser events recorded as incidents
@@ -181,6 +196,7 @@ export async function buildIntegritySummary(sessionId: string): Promise<Integrit
     identityPhoto: Boolean(pre.identityPhotoId),
     submittedBy,
     writingMinutes,
+    recording: recordingOn ? { camera: rec?.camera ?? 0, screen: rec?.screen ?? 0, expected: expectedSegments, bytes: rec?.bytes ?? 0 } : null,
     generatedAt: new Date().toISOString(),
   };
 }

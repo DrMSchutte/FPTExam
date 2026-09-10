@@ -17,10 +17,11 @@ import {
   assessorDecisions,
   evidenceBlobs,
   incidentLog,
+  recordingSegments,
 } from "../db/schema.js";
 import { requireAuth, requireRole, type AuthedRequest } from "../auth/middleware.js";
-import { issueCodes, codesForPrint, staffResume, staffNote, staffRequestCapture, staffIncident } from "./sit.js";
-import { proctoringOf, submitSession, deadlineFor, recordIncident, captureRequestPending } from "../proctoring/session.js";
+import { issueCodes, codesForPrint, staffResume, staffNote, staffRequestCapture, staffIncident, segmentsFor } from "./sit.js";
+import { proctoringOf, submitSession, deadlineFor, recordIncident, captureRequestPending, fullRecordingOn, SEGMENT_SECONDS } from "../proctoring/session.js";
 import { MANUAL_INCIDENTS, evidenceTimeline, integrityReportFor } from "../proctoring/integrity.js";
 import { checkStaffing, cohortLearners, learnerClashes, assessorLoads, assessorScopeMap, invigilatorClashes, invigilatorsNeeded, DEFAULT_MARKING_CAP } from "../scheduling/staffing.js";
 
@@ -334,7 +335,7 @@ sittingsRouter.get(
       .leftJoin(cohorts, eq(cohorts.id, examSittings.cohortId))
       .orderBy(desc(examSittings.startTime))
       .limit(2000);
-    return res.json(rows.map((r) => ({ ...r.sitting, qualificationTitle: r.qualificationTitle, cohortName: r.cohortName, assessorName: r.assessorName, learners: r.learners })));
+    return res.json(rows.map((r) => ({ ...r.sitting, qualificationTitle: r.qualificationTitle, cohortName: r.cohortName, assessorName: r.assessorName, learners: r.learners, fullRecording: fullRecordingOn(r.sitting.proctoringProfile) })));
   }
 );
 
@@ -863,6 +864,21 @@ sittingsRouter.get("/:id/live", requireAuth, requireRole("administrator", "invig
   const nameOf = new Map(rows.map((r) => [r.session.id, r.name]));
   const learnerOf = new Map(rows.map((r) => [r.session.id, r.session.learnerId]));
   const now = Date.now();
+  const recordingOn = fullRecordingOn(sitting.proctoringProfile);
+  // Latest camera/screen segment per session for the console's near-live video.
+  const latestSeg = ids.length && recordingOn
+    ? await db
+        .selectDistinctOn([recordingSegments.sessionId, recordingSegments.kind], { sessionId: recordingSegments.sessionId, kind: recordingSegments.kind, id: recordingSegments.id, startedAt: recordingSegments.startedAt, durationMs: recordingSegments.durationMs })
+        .from(recordingSegments)
+        .where(inArray(recordingSegments.sessionId, ids))
+        .orderBy(recordingSegments.sessionId, recordingSegments.kind, desc(recordingSegments.seq))
+    : [];
+  const latestSegMap = new Map<string, { camera?: { id: string; startedAt: string; durationMs: number }; screen?: { id: string; startedAt: string; durationMs: number } }>();
+  for (const l of latestSeg) {
+    const m = latestSegMap.get(l.sessionId) ?? {};
+    m[l.kind as "camera" | "screen"] = { id: l.id, startedAt: l.startedAt.toISOString(), durationMs: l.durationMs };
+    latestSegMap.set(l.sessionId, m);
+  }
   const learners = rows.map((r) => {
     const s = r.session;
     const p = proctoringOf(s.proctoring);
@@ -882,6 +898,12 @@ sittingsRouter.get("/:id/live", requireAuth, requireRole("administrator", "invig
       if (p.pasteAttempts) { attention = attention ?? "amber"; reasons.push(`${p.pasteAttempts} paste`); }
       if (p.focusLosses + p.fullscreenExits >= 2) { attention = attention ?? "amber"; reasons.push(`left window ${p.focusLosses + p.fullscreenExits}×`); }
       if ((p.cameraLost ?? 0) > 0) { attention = attention ?? "amber"; reasons.push("camera dropped"); }
+      if (recordingOn) {
+        const rec = p.recording;
+        const sinceStart = s.startedAt ? (now - s.startedAt.getTime()) / 1000 : 0;
+        if (sinceStart > SEGMENT_SECONDS * 2.5 && (!rec || !rec.lastAt || now - new Date(rec.lastAt).getTime() > SEGMENT_SECONDS * 2.5 * 1000)) { attention = attention ?? "amber"; reasons.push("recording not arriving"); }
+        else if ((rec?.pending ?? 0) >= 3) { attention = attention ?? "amber"; reasons.push(`uploads behind (${rec!.pending})`); }
+      }
     }
     return {
       sessionId: s.id,
@@ -925,6 +947,7 @@ sittingsRouter.get("/:id/live", requireAuth, requireRole("administrator", "invig
       sealHash: s.sealHash ? s.sealHash.slice(0, 16) : null,
       attention,
       attentionReasons: reasons,
+      recording: recordingOn ? { camera: p.recording?.camera ?? 0, screen: p.recording?.screen ?? 0, pending: p.recording?.pending ?? 0, lastAt: p.recording?.lastAt ?? null, bytes: p.recording?.bytes ?? 0, latestCamera: latestSegMap.get(s.id)?.camera ?? null, latestScreen: latestSegMap.get(s.id)?.screen ?? null } : null,
     };
   });
   const alerts = incidentRows
@@ -932,7 +955,7 @@ sittingsRouter.get("/:id/live", requireAuth, requireRole("administrator", "invig
     .map(({ i, byName }) => ({ id: i.id, sessionId: i.sessionId, learnerId: learnerOf.get(i.sessionId) ?? null, learnerName: nameOf.get(i.sessionId) ?? "", type: i.type, at: i.occurredAt.toISOString(), detail: i.actionTaken, by: i.raisedBy === "invigilator" ? byName ?? "invigilator" : "system" }));
   const invigilators = await db.select({ id: users.id, name: users.name }).from(sittingInvigilators).innerJoin(users, eq(users.id, sittingInvigilators.invigilatorId)).where(eq(sittingInvigilators.sittingId, sitting.id));
   return res.json({
-    sitting: { id: sitting.id, name: sitting.name ?? `${meta?.qualificationTitle ?? ""} · ${meta?.paper ?? ""}`, qualificationTitle: meta?.qualificationTitle ?? "", paper: meta?.paper ?? "", minutes: meta?.minutes ?? 0, venue: sitting.venue, startTime: sitting.startTime.toISOString(), endTime: sitting.endTime.toISOString(), invigilators },
+    sitting: { id: sitting.id, name: sitting.name ?? `${meta?.qualificationTitle ?? ""} · ${meta?.paper ?? ""}`, qualificationTitle: meta?.qualificationTitle ?? "", paper: meta?.paper ?? "", minutes: meta?.minutes ?? 0, venue: sitting.venue, startTime: sitting.startTime.toISOString(), endTime: sitting.endTime.toISOString(), invigilators, fullRecording: recordingOn, segmentSeconds: SEGMENT_SECONDS },
     serverTime: new Date(now).toISOString(),
     counts: {
       total: learners.length,
@@ -986,4 +1009,15 @@ sittingsRouter.get("/:id/learners/:learnerId/evidence", requireAuth, requireRole
   const [timeline, integrity] = await Promise.all([evidenceTimeline(session.id), integrityReportFor(session.id)]);
   await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "session_evidence_viewed", targetType: "session", targetId: session.id });
   return res.json({ sessionId: session.id, timeline, integrity, blobs: await db.select({ n: sql<number>`count(*)::int` }).from(evidenceBlobs).where(eq(evidenceBlobs.sessionId, session.id)).then((r) => r[0].n) });
+});
+
+// Block 8b: the recording of one learner's sitting - every segment, both streams.
+sittingsRouter.get("/:id/learners/:learnerId/recording", requireAuth, requireRole("administrator", "invigilator", "assessor"), async (req: AuthedRequest, res) => {
+  const sitting = await staffOrAssessorOnSitting(req, req.params.id);
+  if (!sitting) return res.status(404).json({ error: "Sitting not found." });
+  const [session] = await db.select().from(learnerSessions).where(and(eq(learnerSessions.sittingId, sitting.id), eq(learnerSessions.learnerId, req.params.learnerId)));
+  if (!session) return res.status(404).json({ error: "That learner is not on this sitting." });
+  const segments = await segmentsFor(session.id);
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "session_recording_viewed", targetType: "session", targetId: session.id });
+  return res.json({ sessionId: session.id, fullRecording: fullRecordingOn(sitting.proctoringProfile), segmentSeconds: SEGMENT_SECONDS, startedAt: session.startedAt?.toISOString() ?? null, submittedAt: session.submissionTime?.toISOString() ?? null, segments, totalBytes: segments.reduce((n, x) => n + x.bytes, 0) });
 });

@@ -27,7 +27,14 @@ export interface ProctoringState {
   notes?: { id: string; text: string; at: string; seenAt?: string }[];
   captureRequestedAt?: string | null;
   lastSeenAt?: string;
+  // Block 8b: full recording - segments landed per stream, when the last one
+  // arrived, and how many the browser reports still waiting to upload.
+  recording?: { camera: number; screen: number; lastAt?: string; pending?: number; bytes: number };
 }
+// Full recording: one self-contained segment per stream every minute.
+export const SEGMENT_SECONDS = 60;
+export const SEGMENT_MAX_BYTES = 24 * 1024 * 1024;
+export const fullRecordingOn = (profile: unknown) => Boolean((profile as { fullRecordingEnabled?: boolean } | null)?.fullRecordingEnabled);
 
 export const PROCTORING_DEFAULTS: ProctoringState = { locks: 0, focusLosses: 0, fullscreenExits: 0, pasteAttempts: 0, photos: 0, screens: 0 };
 // The learner may put the paper back themselves this many times; after that
