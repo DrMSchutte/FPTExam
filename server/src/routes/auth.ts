@@ -8,6 +8,7 @@ import { verifyMfaToken, buildMfaOtpAuthUrl, mfaEnforced } from "../auth/mfa.js"
 import { findLiveSetupToken, markSetupTokenUsed } from "../auth/setupLinks.js";
 import { issueSessionToken, issuePendingMfaToken, verifyPendingMfaToken } from "../auth/jwt.js";
 import type { UserRole } from "../types.js";
+import { loginLimiter, mfaLimiter, setupLimiter } from "../security/index.js";
 
 export const authRouter = Router();
 
@@ -34,7 +35,7 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
-authRouter.post("/login", async (req, res) => {
+authRouter.post("/login", loginLimiter, async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid request body." });
@@ -79,7 +80,7 @@ const mfaVerifySchema = z.object({
   token: z.string().length(6),
 });
 
-authRouter.post("/mfa/verify", async (req, res) => {
+authRouter.post("/mfa/verify", mfaLimiter, async (req, res) => {
   const parsed = mfaVerifySchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid request body." });
@@ -135,7 +136,7 @@ const setupSchema = z.object({
 
 // Completes set-up: the person's own password, and for supervisory roles a
 // first code from the authenticator to prove it is enrolled correctly.
-authRouter.post("/setup/:token", async (req, res) => {
+authRouter.post("/setup/:token", setupLimiter, async (req, res) => {
   const parsed = setupSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid request body.", detail: parsed.error.issues.map((i) => i.message).join(" ") });
   const live = await findLiveSetupToken(req.params.token);

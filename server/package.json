@@ -36,6 +36,8 @@
     "drizzle-orm": "^0.33.0",
     "express": "^4.21.1",
     "express-async-errors": "^3.1.1",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
     "mammoth": "^1.12.2",
     "multer": "^2.3.0",

@@ -19,6 +19,7 @@ import { qualificationsRouter } from "./routes/qualifications.js";
 import { instrumentsRouter } from "./routes/instruments.js";
 import { sittingsRouter } from "./routes/sittings.js";
 import { analyticsRouter } from "./routes/analytics.js";
+import { adminRouter } from "./routes/admin.js";
 import { sessionsRouter } from "./routes/sessions.js";
 import { runMigrations, ensureBootstrapAdmin } from "./db/bootstrap.js";
 import { assessorRouter } from "./routes/assessor.js";
@@ -27,9 +28,14 @@ import { startJobRunner } from "./jobs/runner.js";
 import { sampleExportRouter, isSampleExportEnabled } from "./integrations/curriculaBuilder/sampleExport.js";
 import { sampleSyncRouter, isSampleSyncEnabled } from "./integrations/fptstaff/sampleSync.js";
 import { fptstaffRouter } from "./routes/fptstaff.js";
+import { applySecurity, apiLimiter } from "./security/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+
+// Block 8a: security headers, the camera/screen permission policy, and the
+// trusted proxy hop, before any route runs.
+applySecurity(app);
 
 app.use(
   cors({
@@ -41,6 +47,10 @@ app.use(express.json({ limit: "5mb" }));
 app.use(cookieParser());
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+// A backstop against a runaway client; the tight limits are on the routes that
+// need them (sign-in, authenticator, sitting entry).
+app.use("/api", apiLimiter);
 
 app.use("/api/auth", authRouter);
 app.use("/api/users", usersRouter);
@@ -57,6 +67,7 @@ app.use("/api/fptstaff", fptstaffRouter);
 if (isSampleSyncEnabled()) app.use("/api/exam-sync", sampleSyncRouter);
 app.use("/api/sittings", sittingsRouter);
 app.use("/api/analytics", analyticsRouter);
+app.use("/api/admin", adminRouter);
 // sessionsRouter's own paths already start with /sessions or /me, so it
 // mounts at the API root rather than under an extra prefix.
 app.use("/api", sessionsRouter);

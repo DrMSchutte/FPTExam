@@ -457,7 +457,11 @@ const typeWord = (v: string): PersonType | null => {
 };
 
 function parseSheet(buffer: Buffer, filename: string): ImportRow[] {
-  const wb = XLSX.read(buffer, { type: "buffer", raw: false });
+  // Block 8a: bound the work a single uploaded file can cause. Only an
+  // administrator can reach this route, but a 200 000-row sheet (crafted or
+  // careless) should not tie up the server; 20 000 rows is far more than any
+  // real import.
+  const wb = XLSX.read(buffer, { type: "buffer", raw: false, sheetRows: 20_000 });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   if (!sheet) throw new Error(`No sheet found in ${filename}.`);
   const records = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });

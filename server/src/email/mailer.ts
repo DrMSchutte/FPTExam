@@ -97,3 +97,78 @@ FPT Academy`;
 <p>FPT Academy</p></div>`;
   return { subject: `Your result for ${p.qualificationTitle} has been released`, text, html };
 }
+
+// ---- Block 8e: the reminders ---------------------------------------------------
+//
+// Plain text only. These go to staff several times a week, so they are short,
+// say what to do, and never pretend to be more urgent than they are.
+
+export function assessorScriptsEmail(p: { name: string; waiting: number; overdue: number; sittings: number; oldest: Date | null; overdueDays: number; queueUrl: string }) {
+  const when = p.oldest ? p.oldest.toLocaleDateString("en-ZA", { day: "numeric", month: "long", timeZone: "Africa/Johannesburg" }) : null;
+  const subject = p.overdue > 0
+    ? `${p.overdue} exam script${p.overdue === 1 ? "" : "s"} overdue for marking`
+    : `${p.waiting} exam script${p.waiting === 1 ? "" : "s"} waiting to be marked`;
+  const text = `Hello ${p.name}
+
+You have ${p.waiting} script${p.waiting === 1 ? "" : "s"} waiting to be marked${p.sittings > 1 ? `, across ${p.sittings} sittings` : ""}.${when ? `\nThe oldest was submitted on ${when}.` : ""}
+${p.overdue > 0 ? `\n${p.overdue} of them ${p.overdue === 1 ? "has" : "have"} been waiting longer than ${p.overdueDays} days. Learners cannot see their result until you sign it off.\n` : ""}
+Your marking queue: ${p.queueUrl}
+
+The AI's suggested marks are there to speed you up, not to decide. The mark you sign off is the mark.
+
+FPT Academy`;
+  return { subject, text };
+}
+
+export function invigilatorSittingEmail(p: { name: string; role: "invigilator" | "assessor"; sittingName: string; qualificationTitle: string; day: string; from: string; to: string; venue: string | null; learners: number; codesIssued: number; minutes: number; fullRecording: boolean; consoleUrl: string }) {
+  const missing = p.learners - p.codesIssued;
+  const text = `Hello ${p.name}
+
+${p.role === "invigilator" ? "You are invigilating" : "You are the assessor of record for"} a sitting tomorrow.
+
+  ${p.sittingName}
+  ${p.qualificationTitle}
+  ${p.day}, ${p.from}-${p.to} (${p.minutes} minutes' writing time)
+  ${p.venue ?? "No venue recorded"}
+  ${p.learners} learner${p.learners === 1 ? "" : "s"} on the roster${missing > 0 ? ` - ${missing} still ${missing === 1 ? "has" : "have"} no sitting code` : ", all with sitting codes"}
+  Evidence kept: ${p.fullRecording ? "full recording (camera and screen) plus stills" : "camera and screen stills at intervals"}
+${p.role === "invigilator" ? `
+Before you start: print the sitting codes${missing > 0 ? " (and issue the missing ones)" : ""}, and open the live console when the room opens so you can see everyone at once.
+
+  ${p.consoleUrl}
+` : `
+The scripts will reach your marking queue as learners submit.
+`}
+FPT Academy`;
+  return { subject: `Tomorrow: ${p.sittingName} (${p.from})`, text };
+}
+
+export function adminDigestEmail(p: { name: string; submitted: number; released: number; today: { name: string; at: string; venue: string | null; learners: number }[]; problems: string[]; overdueDays: number; url: string }) {
+  const text = `Hello ${p.name}
+
+Yesterday on FPT Exam: ${p.submitted} paper${p.submitted === 1 ? "" : "s"} submitted, ${p.released} result${p.released === 1 ? "" : "s"} released.
+
+${p.today.length ? `Today's sittings:\n${p.today.map((t) => `  ${t.at}  ${t.name} - ${t.learners} learner${t.learners === 1 ? "" : "s"}${t.venue ? `, ${t.venue}` : ""}`).join("\n")}` : "No sittings today."}
+
+${p.problems.length ? `Needs attention:\n${p.problems.map((x) => `  - ${x}`).join("\n")}` : "Nothing needs attention."}
+
+${p.url}
+
+FPT Academy`;
+  return { subject: `FPT Exam: ${p.today.length ? `${p.today.length} sitting${p.today.length === 1 ? "" : "s"} today` : "no sittings today"}${p.problems.length ? ` · ${p.problems.length} to look at` : ""}`, text };
+}
+
+export function healthAlertEmail(p: { name: string; problems: string[]; url: string }) {
+  const text = `Hello ${p.name}
+
+Something on FPT Exam needs attention:
+
+${p.problems.map((x) => `  - ${x}`).join("\n")}
+
+${p.url}
+
+You are getting this once for this set of problems today, not every hour.
+
+FPT Academy`;
+  return { subject: `FPT Exam needs attention: ${p.problems[0]?.slice(0, 60) ?? "see the dashboard"}`, text };
+}

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
-import type { Qualification, AssessmentInstrument, ExamSitting, PublicUser } from "@shared/types";
+import type { Qualification, AssessmentInstrument, ExamSitting, PublicUser, SystemHealth } from "@shared/types";
 import { PageHeader, Card, CardHead, Badge, Empty, typeWord } from "../../components/ui";
 
 interface Data {
@@ -19,6 +19,9 @@ const fmtTime = (iso: string) =>
 
 export default function AdminOverview() {
   const [data, setData] = useState<Data | null>(null);
+  // Block 8e: anything that needs attention is said here, not just in an email.
+  const [health, setHealth] = useState<SystemHealth | null>(null);
+  useEffect(() => { api.get<SystemHealth>("/admin/health").then(setHealth).catch(() => setHealth(null)); }, []);
 
   useEffect(() => {
     (async () => {
@@ -83,6 +86,22 @@ export default function AdminOverview() {
   return (
     <>
       <PageHeader title="Overview" subtitle="A quick look at what's set up across the exam centre." />
+
+      {health && health.problems.length > 0 && (
+        <Card className="mb-6 border-amber-200">
+          <CardHead
+            title={`${health.problems.length} thing${health.problems.length === 1 ? "" : "s"} need attention`}
+            subtitle="The same list the daily digest is built from."
+            right={<Link className="lnk text-xs whitespace-nowrap" to="/admin/system">Open System</Link>}
+          />
+          <ul className="p-5 pt-4 space-y-1.5">
+            {health.problems.slice(0, 5).map((p, i) => (
+              <li key={i} className="flex gap-3 text-sm"><span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-amber-500" /><span>{p}</span></li>
+            ))}
+            {health.problems.length > 5 && <li className="t-sub pl-5">and {health.problems.length - 5} more</li>}
+          </ul>
+        </Card>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         {tiles.map((t) => (

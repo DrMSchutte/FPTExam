@@ -459,12 +459,19 @@ export function RecordingPlayer({ sittingId, learnerId }: { sittingId: string; l
   const pick = (list: RecordingSegment[]) => list.find((x) => { const s = new Date(x.startedAt).getTime(); return at >= s && at < s + x.durationMs + 1500; }) ?? null;
   const cam = pick(cams), scr = pick(scrs);
   if (!rec.segments.length) return <p className="t-sub">No video has arrived for this sitting yet.</p>;
+  const purged = rec.segments.filter((x) => x.purgedAt).length;
   return (
     <div className="space-y-2 text-[13px]">
       <div className="grid grid-cols-2 gap-1 bg-[#1B2A22] p-1 rounded">
         {[["Camera", cam], ["Screen", scr]].map(([label, seg]) => (
           <figure key={label as string} className="relative aspect-[4/3] bg-black rounded overflow-hidden">
-            {seg ? <video key={(seg as RecordingSegment).id} src={`/api/sit/recording/${(seg as RecordingSegment).id}`} controls autoPlay muted playsInline className="h-full w-full object-contain" /> : <div className="h-full w-full grid place-items-center text-white/40 text-[11.5px]">no {String(label).toLowerCase()} for this minute</div>}
+            {seg && (seg as RecordingSegment).purgedAt ? (
+              <div className="h-full w-full grid place-items-center text-white/45 text-[11.5px] text-center px-3">the video for this minute was deleted under the 12-month retention rule<br /><span className="text-white/30">its hash is kept, so the seal can still be verified</span></div>
+            ) : seg ? (
+              <video key={(seg as RecordingSegment).id} src={`/api/sit/recording/${(seg as RecordingSegment).id}`} controls autoPlay muted playsInline className="h-full w-full object-contain" />
+            ) : (
+              <div className="h-full w-full grid place-items-center text-white/40 text-[11.5px]">no {String(label).toLowerCase()} for this minute</div>
+            )}
             <figcaption className="absolute top-0 left-0 bg-black/55 text-white/85 text-[10.5px] px-1.5 py-0.5">{label as string}{seg ? ` · ${hhmm((seg as RecordingSegment).startedAt)}${(seg as RecordingSegment).afterSeal ? " · after submission" : ""}` : ""}</figcaption>
           </figure>
         ))}
@@ -475,7 +482,7 @@ export function RecordingPlayer({ sittingId, learnerId }: { sittingId: string; l
         <button type="button" className="btn-ghost btn-sm" disabled={minute >= minutes - 1} onClick={() => setMinute(minute + 1)}>▶</button>
         <span className="tabular t-sub w-[120px] text-right">minute {minute + 1} of {minutes} · {hhmm(new Date(at).toISOString())}</span>
       </div>
-      <p className="t-sub">{cams.length} min camera · {scrs.length} min screen · {Math.round(rec.totalBytes / 1048576)} MB{rec.submittedAt ? ` · submitted ${hhmm(rec.submittedAt)}` : ""}. Gaps show as "no camera for this minute" — the browser was offline or the paper was locked.</p>
+      <p className="t-sub">{cams.length} min camera · {scrs.length} min screen · {Math.round(rec.totalBytes / 1048576)} MB{rec.submittedAt ? ` · submitted ${hhmm(rec.submittedAt)}` : ""}. Gaps show as "no camera for this minute" — the browser was offline or the paper was locked.{purged > 0 ? ` ${purged} minute${purged === 1 ? "" : "s"} of video ${purged === 1 ? "has" : "have"} been deleted under the 12-month retention rule; the hashes are kept.` : ""}</p>
     </div>
   );
 }

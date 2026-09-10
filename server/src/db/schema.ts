@@ -335,6 +335,11 @@ export const examSittings = pgTable("exam_sittings", {
   independentInvigilationRequired: boolean("independent_invigilation_required")
     .notNull()
     .default(false),
+  // Block 8a: evidence retention. A sitting on hold is never swept, however
+  // old it is - an appeal, an investigation or a QCTO request.
+  evidenceHoldAt: timestamp("evidence_hold_at", { withTimezone: true }),
+  evidenceHoldReason: text("evidence_hold_reason"),
+  evidencePurgedAt: timestamp("evidence_purged_at", { withTimezone: true }),
   createdBy: uuid("created_by")
     .notNull()
     .references(() => users.id),
@@ -401,6 +406,9 @@ export const learnerSessions = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }),
     extraMinutes: integer("extra_minutes").notNull().default(0),
     proctoring: jsonb("proctoring"),
+    // Block 8a: one learner's evidence held back from the retention sweep.
+    evidenceHoldAt: timestamp("evidence_hold_at", { withTimezone: true }),
+    evidenceHoldReason: text("evidence_hold_reason"),
   },
   (t) => ({
     uniqSittingLearner: uniqueIndex("uq_learner_sessions_sitting_learner").on(
@@ -461,6 +469,9 @@ export const recordingSegments = pgTable(
     storageKey: text("storage_key").notNull(),
     sha256: text("sha256").notNull(),
     afterSeal: boolean("after_seal").notNull().default(false),
+    // Block 8a: the video has been deleted under the retention rule; the row
+    // (and its hash) stays, so the seal can still be verified.
+    purgedAt: timestamp("purged_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
@@ -610,3 +621,28 @@ export const backgroundJobs = pgTable("background_jobs", {
   progress: jsonb("progress"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// Block 8e: every reminder the system decides to send, whether or not email is
+// connected. `dedupeKey` is what stops the same reminder going twice - it
+// carries the day (or the sitting) it is about, so "you have scripts waiting"
+// goes once a day and "your sitting is tomorrow" goes once per sitting.
+export const notificationLog = pgTable(
+  "notification_log",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    kind: text("kind").notNull(), // assessor_scripts_waiting | assessor_overdue | invigilator_sitting_tomorrow | admin_digest | admin_health_alert
+    dedupeKey: text("dedupe_key").notNull(),
+    toUserId: uuid("to_user_id").references(() => users.id, { onDelete: "set null" }),
+    toEmail: text("to_email").notNull(),
+    subject: text("subject").notNull(),
+    body: text("body").notNull(),
+    status: text("status").notNull().default("pending"), // pending | sent | not_connected | failed
+    detail: text("detail"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+  },
+  (t) => ({
+    uniqKey: uniqueIndex("uq_notification_log_kind_key").on(t.kind, t.dedupeKey),
+    createdIdx: index("idx_notification_log_created").on(t.createdAt),
+  })
+);

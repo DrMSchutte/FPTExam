@@ -1123,3 +1123,48 @@ sittingsRouter.get("/:id/learners/:learnerId/evidence-pack.zip", requireAuth, re
     res.end();
   }
 });
+
+// ---- Block 8a: evidence hold ---------------------------------------------------------
+//
+// An appeal, an investigation or a QCTO request means this sitting's captures
+// and recordings must not be deleted when they turn 12 months old. A hold can
+// cover the whole sitting or one learner. Administrator only, always with a
+// reason, always audited.
+
+const holdSchema = z.object({ reason: z.string().trim().min(4).max(300) });
+
+sittingsRouter.post("/:id/evidence-hold", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
+  const parsed = holdSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Say why this sitting's evidence must be kept." });
+  const [sitting] = await db.select().from(examSittings).where(eq(examSittings.id, req.params.id));
+  if (!sitting) return res.status(404).json({ error: "Sitting not found." });
+  await db.update(examSittings).set({ evidenceHoldAt: new Date(), evidenceHoldReason: parsed.data.reason }).where(eq(examSittings.id, sitting.id));
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "sitting_evidence_held", targetType: "sitting", targetId: sitting.id, reason: parsed.data.reason });
+  return res.json({ held: true, reason: parsed.data.reason });
+});
+
+sittingsRouter.delete("/:id/evidence-hold", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
+  const [sitting] = await db.select().from(examSittings).where(eq(examSittings.id, req.params.id));
+  if (!sitting) return res.status(404).json({ error: "Sitting not found." });
+  await db.update(examSittings).set({ evidenceHoldAt: null, evidenceHoldReason: null }).where(eq(examSittings.id, sitting.id));
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "sitting_evidence_hold_released", targetType: "sitting", targetId: sitting.id, reason: sitting.evidenceHoldReason ?? undefined });
+  return res.json({ held: false });
+});
+
+sittingsRouter.post("/:id/learners/:learnerId/evidence-hold", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
+  const parsed = holdSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Say why this learner's evidence must be kept." });
+  const [session] = await db.select().from(learnerSessions).where(and(eq(learnerSessions.sittingId, req.params.id), eq(learnerSessions.learnerId, req.params.learnerId)));
+  if (!session) return res.status(404).json({ error: "That learner is not on this sitting." });
+  await db.update(learnerSessions).set({ evidenceHoldAt: new Date(), evidenceHoldReason: parsed.data.reason }).where(eq(learnerSessions.id, session.id));
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "session_evidence_held", targetType: "session", targetId: session.id, reason: parsed.data.reason });
+  return res.json({ held: true, reason: parsed.data.reason });
+});
+
+sittingsRouter.delete("/:id/learners/:learnerId/evidence-hold", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
+  const [session] = await db.select().from(learnerSessions).where(and(eq(learnerSessions.sittingId, req.params.id), eq(learnerSessions.learnerId, req.params.learnerId)));
+  if (!session) return res.status(404).json({ error: "That learner is not on this sitting." });
+  await db.update(learnerSessions).set({ evidenceHoldAt: null, evidenceHoldReason: null }).where(eq(learnerSessions.id, session.id));
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "session_evidence_hold_released", targetType: "session", targetId: session.id });
+  return res.json({ held: false });
+});

@@ -11,6 +11,7 @@ import { proctoringOf, recordIncident, submitSession, deadlineFor, captureReques
 import { recordingSegments } from "../db/schema.js";
 import { objectStore } from "../storage/index.js";
 import express from "express";
+import { sittingEntryLimiter } from "../security/index.js";
 
 // Block 5a - the learner's way into a proctored sitting.
 //
@@ -104,7 +105,7 @@ function stateOf(row: NonNullable<Awaited<ReturnType<typeof loadSitting>>>) {
 
 const enterSchema = z.object({ code: z.string().trim().min(8).max(20), idNumber: z.string().trim().regex(/^[0-9 ]{13,16}$/) });
 
-sitRouter.post("/enter", async (req, res) => {
+sitRouter.post("/enter", sittingEntryLimiter, async (req, res) => {
   const parsed = enterSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Enter your sitting code and your 13-digit ID number." });
   const codeHash = hashCode(parsed.data.code);
@@ -522,7 +523,7 @@ sitRouter.get("/recording/:segmentId", requireAuth, requireRole("administrator",
 
 export async function segmentsFor(sessionId: string) {
   const rows = await db.select().from(recordingSegments).where(eq(recordingSegments.sessionId, sessionId)).orderBy(recordingSegments.kind, recordingSegments.seq);
-  return rows.map((r) => ({ id: r.id, kind: r.kind as "camera" | "screen", seq: r.seq, startedAt: r.startedAt.toISOString(), durationMs: r.durationMs, bytes: r.bytes, afterSeal: r.afterSeal }));
+  return rows.map((r) => ({ id: r.id, kind: r.kind as "camera" | "screen", seq: r.seq, startedAt: r.startedAt.toISOString(), durationMs: r.durationMs, bytes: r.bytes, afterSeal: r.afterSeal, sha256: r.sha256, purgedAt: r.purgedAt?.toISOString() ?? null }));
 }
 
 // ---- Staff: resume a locked paper, submit on the learner's behalf, extra time --------------

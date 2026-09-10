@@ -31,13 +31,23 @@ const POLL_MS = 5000;
 const MAX_ATTEMPTS = 3;
 const BACKOFF_MS = [30_000, 120_000, 600_000];
 
+// Block 8e: two lanes, drained independently. An AI review can take minutes;
+// an email or an FPTStaff push must not wait behind it, and a queue of twenty
+// submissions must not hold up tomorrow's reminders. Each lane claims only its
+// own job types, so the atomic claim still guarantees one runner per job.
+const LANES = {
+  slow: ["ai_response_review"],
+  quick: ["fptstaff_push", "result_email", "fptstaff_learner_push", "reminder_sweep", "send_notifications", "retention_sweep"],
+} as const;
+const ALL_JOB_TYPES = [...LANES.slow, ...LANES.quick];
+
 export async function enqueueJob(jobType: string, payload: Record<string, unknown>): Promise<string> {
   const [job] = await db.insert(backgroundJobs).values({ jobType, payload, status: "pending" }).returning();
   return job.id;
 }
 
-async function claimNext() {
-  // Claim the oldest due pending job of a type we know how to run.
+async function claimNext(types: readonly string[]) {
+  // Claim the oldest due pending job of a type this lane runs.
   const rows = await db.execute(sql`
     UPDATE background_jobs
        SET status = 'running', attempts = attempts + 1
@@ -45,7 +55,7 @@ async function claimNext() {
        SELECT id FROM background_jobs
         WHERE status = 'pending'
           AND run_after <= now()
-          AND job_type IN ('ai_response_review', 'fptstaff_push', 'result_email', 'fptstaff_learner_push')
+          AND job_type IN (${sql.join(types.map((t) => sql`${t}`), sql`, `)})
         ORDER BY created_at
         LIMIT 1
         FOR UPDATE SKIP LOCKED
@@ -131,6 +141,15 @@ async function runOne(job: { id: string; job_type: string; payload: Record<strin
     } else if (job.job_type === "fptstaff_learner_push") {
       const { runLearnerPush } = await import("../integrations/fptstaff/sync.js");
       result = await runLearnerPush(job.payload as { userId: string });
+    } else if (job.job_type === "reminder_sweep") {
+      const { runReminderSweep } = await import("../notify/index.js");
+      result = { ...(await runReminderSweep(job.payload as { force?: boolean })) };
+    } else if (job.job_type === "send_notifications") {
+      const { sendPending } = await import("../notify/index.js");
+      result = await sendPending();
+    } else if (job.job_type === "retention_sweep") {
+      const { runRetentionSweep } = await import("../retention/index.js");
+      result = { ...(await runRetentionSweep(job.payload as { dryRun?: boolean })) };
     } else {
       throw new Error(`Unknown job type ${job.job_type}`);
     }
@@ -151,28 +170,28 @@ async function runOne(job: { id: string; job_type: string; payload: Record<strin
   }
 }
 
-let timer: NodeJS.Timeout | null = null;
-let busy = false;
+const timers: NodeJS.Timeout[] = [];
+const busy: Record<string, boolean> = {};
 
-async function tick() {
-  if (busy) return;
-  busy = true;
+async function tick(lane: keyof typeof LANES) {
+  if (busy[lane]) return;
+  busy[lane] = true;
   try {
-    // Drain everything that's due, one at a time.
+    // Drain everything that's due in this lane, one at a time.
     for (;;) {
-      const job = await claimNext();
+      const job = await claimNext(LANES[lane]);
       if (!job) break;
       await runOne(job);
     }
   } catch (err) {
-    console.error("Job runner tick failed:", err);
+    console.error(`Job runner (${lane} lane) tick failed:`, err);
   } finally {
-    busy = false;
+    busy[lane] = false;
   }
 }
 
 export function startJobRunner() {
-  if (timer) return;
+  if (timers.length) return;
   // Anything left 'running' by a process that died mid-job goes back to the
   // queue on start so it is picked up again rather than stuck forever.
   db.update(backgroundJobs)
@@ -180,7 +199,7 @@ export function startJobRunner() {
     .where(
       and(
         eq(backgroundJobs.status, "running"),
-        sql`${backgroundJobs.jobType} IN ('ai_response_review', 'fptstaff_push', 'result_email', 'fptstaff_learner_push')`,
+        sql`${backgroundJobs.jobType} IN (${sql.join(ALL_JOB_TYPES.map((t) => sql`${t}`), sql`, `)})`,
         lte(backgroundJobs.attempts, MAX_ATTEMPTS)
       )
     )
@@ -200,11 +219,40 @@ export function startJobRunner() {
       db.execute(sql`UPDATE assessment_instruments SET intake_status = 'blocked' WHERE intake_status = 'checking' AND created_at < now() - interval '1 minute'`)
     )
     .catch((err) => console.error("Could not fail orphaned in-process jobs:", err));
-  timer = setInterval(() => void tick(), POLL_MS);
-  void tick();
+  for (const lane of Object.keys(LANES) as (keyof typeof LANES)[]) {
+    timers.push(setInterval(() => void tick(lane), POLL_MS));
+    void tick(lane);
+  }
   // Block 5b: papers still open past their deadline are submitted as they stand.
-  setInterval(() => {
+  timers.push(setInterval(() => {
     autoSubmitExpired().then((n) => { if (n) console.log(`Auto-submitted ${n} paper(s) at time-up.`); }).catch((err) => console.error("Auto-submit sweep failed:", err));
-  }, 60_000);
-  console.log("Background job runner started.");
+  }, 60_000));
+  // Block 8e: on the hour, work out which reminders are due and send whatever
+  // is waiting. Also the nightly retention sweep (Block 8a). Both are ordinary
+  // jobs, so they are recorded, retried and visible like everything else.
+  timers.push(setInterval(() => void hourly(), 5 * 60_000));
+  void hourly();
+  console.log("Background job runner started (slow and quick lanes).");
+}
+
+// Block 8e: the hourly work, enqueued as ordinary jobs so it is recorded,
+// retried and visible like everything else. The poll runs more often than
+// hourly, so the hour key keeps it to once an hour; anything queued in
+// between (a reminder written by hand) is still sent on the next poll.
+let lastHourRun = "";
+async function hourly() {
+  const hourKey = new Date().toISOString().slice(0, 13);
+  if (lastHourRun === hourKey) {
+    await enqueueJob("send_notifications", {}).catch(() => undefined);
+    return;
+  }
+  lastHourRun = hourKey;
+  try {
+    await enqueueJob("reminder_sweep", {});
+    await enqueueJob("send_notifications", {});
+    // 03:00 SAST: the retention sweep.
+    if (new Date().getUTCHours() === 1) await enqueueJob("retention_sweep", {});
+  } catch (err) {
+    console.error("Could not enqueue the hourly work:", err);
+  }
 }

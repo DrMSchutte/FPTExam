@@ -696,7 +696,9 @@ export interface LiveLearner {
   recording: { camera: number; screen: number; pending: number; lastAt: string | null; bytes: number; latestCamera: RecordingSegmentRef | null; latestScreen: RecordingSegmentRef | null } | null;
 }
 export interface RecordingSegmentRef { id: string; startedAt: string; durationMs: number }
-export interface RecordingSegment extends RecordingSegmentRef { kind: "camera" | "screen"; seq: number; bytes: number; afterSeal: boolean }
+// sha256 is kept for ever so the seal can be verified; purgedAt is set once
+// the video itself has been deleted under the retention rule (Block 8a).
+export interface RecordingSegment extends RecordingSegmentRef { kind: "camera" | "screen"; seq: number; bytes: number; afterSeal: boolean; sha256: string; purgedAt: string | null }
 export interface RecordingResponse { sessionId: string; fullRecording: boolean; segmentSeconds: number; startedAt: string | null; submittedAt: string | null; segments: RecordingSegment[]; totalBytes: number }
 
 export interface LiveAlert { id: string; sessionId: string; learnerId: string | null; learnerName: string; type: string; at: string; detail: string | null; by: string }
@@ -780,4 +782,47 @@ export interface ItemRow {
 export interface ItemAnalysisResponse {
   instrument: { id: string; version: string; qualificationTitle: string; questions: number; totalMarks: number; verdict: string | null };
   learners: number; avgPercentage: number | null; passRate: number | null; items: ItemRow[]; note: string;
+}
+
+// ---- Blocks 8e and 8a: reminders, health, retention, audit trail ----------------
+
+export interface SystemHealth {
+  at: string;
+  failedJobs: { jobType: string; n: number; detail: string | null }[];
+  resultPushesFailed: number; resultPushesPending: number;
+  papersBlocked: number; sittingsWithoutCodes: number; scriptsOverdue: number;
+  emailConnected: boolean;
+  recordingGaps: { sittingName: string | null; learnerName: string; expected: number; got: number }[];
+  problems: string[];
+  remindersOff: boolean; overdueDays: number;
+}
+
+export interface ReminderRow {
+  id: string; kind: string; toEmail: string; subject: string; body: string;
+  status: "pending" | "sent" | "not_connected" | "failed"; detail: string | null;
+  createdAt: string; sentAt: string | null;
+}
+export interface RemindersResponse {
+  remindersOff: boolean;
+  counts: { sent: number; notConnected: number; failed: number; pending: number };
+  rows: ReminderRow[];
+}
+
+export interface RetentionResponse {
+  retentionMonths: number; cutoff: string;
+  due: { id: string; name: string | null; qualificationTitle: string; endTime: string; stills: number; segments: number; bytes: number; heldSessions: number }[];
+  dueBytes: number;
+  onHold: { id: string; name: string | null; qualificationTitle: string; endTime: string; holdAt: string | null; holdReason: string | null; heldSessions: number }[];
+  purgedSittings: number;
+  dueWithinAMonth: { id: string; name: string | null; endTime: string }[];
+}
+
+export interface AuditRow {
+  id: string; at: string; action: string; label: string; actor: string; actorEmail: string | null;
+  targetType: string | null; targetId: string | null; reason: string | null;
+}
+export interface AuditResponse {
+  total: number; limit: number; offset: number;
+  actions: { action: string; label: string; n: number }[];
+  rows: AuditRow[];
 }
