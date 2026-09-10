@@ -143,7 +143,8 @@ function ArchiveLine({ r, open, onToggle }: { r: ArchiveRow; open: boolean; onTo
       {open && (
         <tr>
           <td colSpan={6} className="bg-surface-2/60 p-0">
-            <div className="px-4 py-4 space-y-4">
+            <div className="px-4 py-4 space-y-3">
+              <HoldControl sittingId={r.id} keptUntil={r.retentionUntil} />
               <div className="flex flex-wrap items-center gap-3 text-xs">
                 <span className="font-semibold text-ink-muted uppercase tracking-wide text-[11px]">Sitting reports</span>
                 <a className="lnk" href={`/api/sittings/${r.id}/register.pdf`} target="_blank" rel="noreferrer">Sitting register (PDF)</a>
@@ -159,6 +160,59 @@ function ArchiveLine({ r, open, onToggle }: { r: ArchiveRow; open: boolean; onTo
         </tr>
       )}
     </>
+  );
+}
+
+// Block 8a: an appeal, an investigation or a QCTO request means this sitting's
+// captures and recordings must not be deleted when they turn 12 months old.
+function HoldControl({ sittingId, keptUntil }: { sittingId: string; keptUntil: string }) {
+  const [state, setState] = useState<{ held: boolean; reason: string | null } | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.get<{ onHold: { id: string; holdReason: string | null }[] }>("/admin/retention")
+      .then((d) => { const mine = d.onHold.find((h) => h.id === sittingId); setState({ held: Boolean(mine), reason: mine?.holdReason ?? null }); })
+      .catch(() => setState({ held: false, reason: null }));
+  }, [sittingId]);
+
+  const hold = async () => {
+    setBusy(true); setErr(null);
+    try { const r = await api.post<{ held: boolean; reason: string }>(`/sittings/${sittingId}/evidence-hold`, { reason }); setState({ held: true, reason: r.reason }); setAsking(false); setReason(""); }
+    catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+  const release = async () => {
+    setBusy(true); setErr(null);
+    try { await api.del(`/sittings/${sittingId}/evidence-hold`); setState({ held: false, reason: null }); }
+    catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+
+  if (!state) return null;
+  return (
+    <div className={"rounded-lg border p-3 text-xs " + (state.held ? "border-amber-200 bg-amber-50/60" : "border-line bg-surface")}>
+      {err && <p className="text-red-700 mb-2">{err}</p>}
+      {state.held ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <Badge tone="amber">Evidence on hold</Badge>
+          <span>{state.reason ?? "Kept until released."} Nothing is deleted while this stands.</span>
+          <button type="button" className="lnk" disabled={busy} onClick={release}>Release the hold</button>
+        </div>
+      ) : asking ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="field-lbl">Why must this evidence be kept?</label>
+          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Learner has appealed the result" className="inp h-8 text-xs flex-1 min-w-[16rem]" />
+          <button type="button" className="btn btn-sm" disabled={busy || reason.trim().length < 4} onClick={hold}>Put on hold</button>
+          <button type="button" className="lnk" onClick={() => setAsking(false)}>Cancel</button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-ink-muted">Captures and recordings are deleted on {fmtDay(keptUntil)} under the 12-month rule. Marks, statements, hashes and the audit trail are kept for good.</span>
+          <button type="button" className="lnk" onClick={() => setAsking(true)}>Hold this evidence</button>
+        </div>
+      )}
+    </div>
   );
 }
 

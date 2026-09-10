@@ -278,13 +278,8 @@ export, issue the key, set the two secrets on FPT Exam, press *Test connection*.
 Order agreed with Melanie: 8b full recording → 8c evidence archive, packs and learner self-view →
 8d analytics → 8e automations → 8a security last (so testing is not hampered).
 
-Still to build: **8d** analytics (pass rates by cohort / qualification / paper, item analysis,
-assessor consistency against the AI suggestion, integrity rates per sitting and venue,
-time-to-mark, no-shows and non-completion; exportable); **8e** automations (assessor
-"scripts waiting" and overdue emails, invigilator "sitting tomorrow", uptime alert — needs
-SMTP; plus two job lanes so a long AI review never holds up an email or an FPTStaff push);
-**8a** security (rate limits on login / MFA / sitting entry, security headers, dependency
-audit, the 12-month evidence sweep with a hold flag, the audit-trail screen with CSV).
+Block 8 is complete: 8b, 8c, 8d, 8e and 8a are all delivered. What remains is not building
+but switching on — see *Before the first real sitting* at the end of this plan.
 
 **8b — Full recording (delivered 10 Sep 2026).** A choice on the sitting form, *Evidence
 kept*: **Stills** (as before) or **Full recording** — continuous video of the camera and
@@ -371,6 +366,69 @@ permanently. The sweep and the hold flag are 8a.
 person here is recorded as a conflict (possible duplicate person) instead of retrying; the
 sample sync issues stable ids across restarts.
 
+**8d — Analytics (delivered 10 Sep 2026).** New administrator page, filtered by a date
+window over the *sitting* date and optionally one qualification. Headline: sittings, papers
+written, pass rate, average mark, average hours to mark a script, share flagged for a look.
+*Who actually sat* — the funnel from registered to released, naming where learners fall out
+(never arrived, checked in but never opened, opened but never submitted, still being marked).
+*Results by…* — the same measures cut by qualification, cohort, paper, venue, sitting or
+month. *Are the questions doing their job?* — item analysis per paper: marks, average,
+**facility** (share of available marks earned) and **discrimination** (strongest third minus
+weakest third), zeroes, full marks, blanks, and plain-language flags ("almost everyone got it
+— separates nobody", "the strongest learners did no better than the weakest — review this
+question"); nothing is flagged below five marked scripts and the page says so. *Marking
+consistency* — per assessor: scripts signed off, time to mark, average awarded, and how their
+marks sat against the AI suggestion (accepted unchanged %, mean difference in marks, above /
+below, outcome differed, suggestions overridden) — the AI is a mirror, not an authority, and
+the page says so. *What the proctoring caught* — how often each integrity finding fires, so a
+rule that fires on everyone or never fires can be questioned. Every table exports to CSV.
+Administrator only; assessors may see the item analysis of a paper they mark.
+
+**8e — Reminders and two job lanes (delivered 10 Sep 2026).** Nobody has to remember to look:
+assessors are told each morning what is waiting (and firmly, once a script passes the
+five-day rule); everyone working a sitting — invigilators and the assessor of record — is
+told the afternoon before, with the venue, the roster size, how many still need codes and
+what evidence is being kept; the Administrator gets a daily digest (yesterday, today, what is
+stuck) and an alert when something needs attention now. Every reminder is written to a log
+first with a dedupe key carrying the day or the sitting, so a restart, a second server or a
+hand-run can never send it twice. **Until SMTP is set, nothing is lost**: each reminder is
+kept as *held back — email not connected* and the exact text is on screen to send by hand.
+*System* page (new): **Needs attention** (jobs that gave up, results not reaching FPTStaff,
+blocked papers, sittings without codes, overdue scripts, recordings that never arrived, email
+not connected), **Reminders sent** with *Run the reminders now*, plus the retention and audit
+screens below. The same attention list appears on the Overview. The job runner now drains two
+independent lanes — slow (AI marking review) and quick (emails, FPTStaff pushes, sweeps) — so
+a queue of marking reviews never holds up an email again. `REMINDERS=off` switches reminders
+off.
+
+**8a — Security and retention (delivered 10 Sep 2026, deliberately last).**
+*Rate limits* where guessing would pay, counted only against failures: signing in (20 per
+account+address per 10 min), authenticator codes (12), entering with a sitting code (60 — a
+room of thirty typing twice is unaffected), set-up links (30/hour), and a 600/min backstop.
+Off outside production unless `RATE_LIMITS=on`, so tests are never measuring themselves.
+*Security headers* (helmet): content-security-policy locked to this origin with
+`frame-ancestors 'none'`, `X-Frame-Options: DENY`, nosniff, HSTS, strict referrer, no
+`X-Powered-By`, `noindex`. The one that matters here is
+`Permissions-Policy: camera=(self), microphone=(self), display-capture=(self)` with
+geolocation, payment, USB, serial, Bluetooth, MIDI and idle-detection switched off — the exam
+room may use the camera and share the screen; nothing it embeds can. One proxy hop is trusted
+so limits and the audit trail see the real client address behind Replit.
+*Evidence retention*, as the consent text promises: captures and recordings are deleted 12
+months after the sitting, nightly and on demand. What goes is the image and video bytes; what
+stays for good is **every SHA-256 hash**, the seal, the integrity report, the marks, the
+Statement of Results and the audit trail — a purged sitting can still be shown to have been
+run properly and verified, it just no longer holds anyone's picture. A player asked for purged
+video says so rather than failing. **Hold**: a sitting (or one learner) under appeal or
+investigation is never swept — set from the Evidence Archive with a reason, released the same
+way. *What would go?* runs the sweep as a dry run.
+*Audit trail* screen: every recorded action, newest first, searchable and filterable by
+action, paged, exportable to CSV — and taking the export is itself recorded. Nothing in the
+trail can be edited or deleted through the application.
+*Dependency audit:* `npm audit` run and the non-breaking fixes applied. What is left, and why
+it is left, is in `docs/security-notes.md` — the four remaining advisories are all
+major-version upgrades or have no fix, none is reachable from a learner's browser, and each
+has a stated plan.
+
 ## Decisions taken 9 Sep 2026 (were the open decisions)
 
 *Added 10 Sep 2026:* **the shape of a paper.** A Final Integrated Summative Assessment is an
@@ -421,3 +479,37 @@ here (API tests, browser walk-through, Phase C marking regression), then merged 
 FPTExam folder for **Push origin → Pull → Run**. Each delivery note says what changed
 and what to click. The restructure document and this plan are updated as decisions land;
 both live in the repo under `docs/` and in the Claude project.
+
+## Before the first real sitting (10 Sep 2026 — nothing left to build, only to switch on)
+
+On the Repl's **Secrets**:
+
+1. `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` — until these are
+   set nothing is emailed. Set-up links, result notices and every reminder are kept on
+   screen instead (*System → Reminders sent*), so nothing is lost, but every one has to be
+   sent by hand. This is the single most valuable switch left.
+2. `MFA_REQUIRED=yes` — authenticator app for every administrator, assessor and invigilator.
+3. `RECORDINGS_STORAGE=replit` and a bucket in **App Storage**, for any sitting kept as a
+   full recording. Roughly 1 MB per minute for both streams: a three-hour paper is about
+   0.5–1 GB per learner, and a 30-learner room wants 15–25 Mbps upstream.
+4. **Remove** `CURRICULA_BUILDER_MOCK`, `FPTSTAFF_MOCK` and `ENABLE_PAPER_AUTHORING`. The
+   first two serve sample data; the third lets a paper be typed in without a standard check.
+5. **Remove** `ADMIN_RECOVER` if it is still set.
+6. `DATA_ENCRYPTION_KEY` / `FIELD_KEY` set before real ID numbers go in (see
+   `security-notes.md`).
+7. Optional: `REMINDERS=off` silences the reminder emails; `RATE_LIMITS` is on by default in
+   production.
+
+Then, in the app:
+
+8. **Rehearsal.** One sitting, three or four staff as learners, one fully recorded: enter with
+   a code, check in, write, lock the paper by leaving the window, have the invigilator release
+   it, submit, mark and sign off, and read the result as the learner. Then take the
+   **Portfolio of Evidence** and open one **evidence pack** — that is what a verifier sees.
+9. **Papers.** Retire anything that cannot be fixed (*Set up an Assessment → the paper →
+   Retire it*), and check every live paper's **Alignment matrix** and **Paper shape** card.
+10. **People.** Pull assessors, invigilators and learners from FPTStaff once its side is
+    built, or import the spreadsheet; every learner needs their 13-digit ID number.
+11. **Jacques' side.** `curricula-builder-contract.md` + `curricula-builder-export-reference.md`
+    for the Curricula Builder export; `fptstaff-contract.md` + `fptstaff-sync-reference.md`
+    for the FPTStaff sync. FPT Exam validates both and names the field that is wrong.
