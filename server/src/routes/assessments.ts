@@ -704,6 +704,7 @@ async function resultRows(f: z.infer<typeof resultsQuery>) {
       assessorId: assessorDecisions.assessorId,
       pushStatus: fptstaffResultPushes.status,
       pushSentAt: fptstaffResultPushes.sentAt,
+      pushAck: fptstaffResultPushes.fptstaffAck,
     })
     .from(assessorDecisions)
     .innerJoin(learnerSessions, eq(assessorDecisions.sessionId, learnerSessions.id))
@@ -733,7 +734,7 @@ async function resultRows(f: z.infer<typeof resultsQuery>) {
     const status = j.status === "done" ? (r.sent ? "sent" : "not_connected") : j.status === "failed" ? "failed" : "queued";
     emailOf.set(j.session_id, { status, detail: r.reason ?? r.detail ?? null, at: r.at ?? null });
   }
-  return rows.map((r) => ({ ...r, assessorName: nameOf.get(r.assessorId) ?? "—", idNumberMasked: r.idNumberLast4 ? `••••••••• ${r.idNumberLast4}` : null, resultEmail: emailOf.get(r.sessionId) ?? null }));
+  return rows.map((r) => ({ ...r, pushAck: undefined, pushError: (r.pushAck as { error?: string } | null)?.error ?? null, assessorName: nameOf.get(r.assessorId) ?? "—", idNumberMasked: r.idNumberLast4 ? `••••••••• ${r.idNumberLast4}` : null, resultEmail: emailOf.get(r.sessionId) ?? null }));
 }
 
 assessmentsRouter.get("/results", requireAuth, requireRole("administrator"), async (req, res) => {

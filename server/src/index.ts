@@ -24,6 +24,8 @@ import { assessorRouter } from "./routes/assessor.js";
 import { assessmentsRouter } from "./routes/assessments.js";
 import { startJobRunner } from "./jobs/runner.js";
 import { sampleExportRouter, isSampleExportEnabled } from "./integrations/curriculaBuilder/sampleExport.js";
+import { sampleSyncRouter, isSampleSyncEnabled } from "./integrations/fptstaff/sampleSync.js";
+import { fptstaffRouter } from "./routes/fptstaff.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -49,6 +51,9 @@ app.use("/api/instruments", instrumentsRouter);
 app.use("/api/assessments", assessmentsRouter);
 // Block 7: the sample Curricula Builder export (CURRICULA_BUILDER_MOCK=yes only).
 if (isSampleExportEnabled()) app.use("/api/exam-export", sampleExportRouter);
+// Block 6: FPTStaff connection, and its sample stand-in (FPTSTAFF_MOCK=yes only).
+app.use("/api/fptstaff", fptstaffRouter);
+if (isSampleSyncEnabled()) app.use("/api/exam-sync", sampleSyncRouter);
 app.use("/api/sittings", sittingsRouter);
 // sessionsRouter's own paths already start with /sessions or /me, so it
 // mounts at the API root rather than under an extra prefix.

@@ -76,6 +76,12 @@ scheduled into a sitting until it is re-uploaded fixed, or an Administrator **ov
 with a reason** (status `override`, reason in the audit log). Only `ready`/`override`
 papers appear in the sitting picker.
 
+### FPTStaff connection (Block 6, 10 Sep 2026)
+Pull from FPTStaff by section (one cohort per section, learners matched by ID number,
+re-pull safe), pull assessors and invigilators, push everyone registered here, push every
+signed-off result with its Statement of Results. Moderation, verification and
+certification stay on FPTStaff; the result push is the hand-over point.
+
 ### Register People
 Pulled from FPTStaff by section (students / assessors / invigilators), role pre-filled,
 manual "add new" until FPTStaff is connected (pushed back with duplicate guard). The exam

@@ -125,6 +125,8 @@ export const users = pgTable("users", {
   // FPTStaff identifier when they were pulled from - or pushed to - FPTStaff.
   source: userSourceEnum("source").notNull().default("manual"),
   fptstaffId: text("fptstaff_id").unique(),
+  // Block 6: when this person was last matched or pushed to FPTStaff.
+  fptstaffSyncedAt: timestamp("fptstaff_synced_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -262,6 +264,8 @@ export const cohorts = pgTable("cohorts", {
   notes: text("notes"),
   status: cohortStatusEnum("status").notNull().default("active"),
   externalRef: text("external_ref"),
+  // Block 6: the FPTStaff section this cohort mirrors (pulled by section).
+  fptstaffSectionId: text("fptstaff_section_id"),
   createdBy: uuid("created_by").notNull().references(() => users.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

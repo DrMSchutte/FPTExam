@@ -45,7 +45,7 @@ async function claimNext() {
        SELECT id FROM background_jobs
         WHERE status = 'pending'
           AND run_after <= now()
-          AND job_type IN ('ai_response_review', 'fptstaff_push', 'result_email')
+          AND job_type IN ('ai_response_review', 'fptstaff_push', 'result_email', 'fptstaff_learner_push')
         ORDER BY created_at
         LIMIT 1
         FOR UPDATE SKIP LOCKED
@@ -91,16 +91,11 @@ async function runAiResponseReview(payload: { sessionId: string }) {
   return { reviewId: saved.id, questions: review.perQuestion.length };
 }
 
+// Block 6: delivered to FPTStaff with the Statement of Results
+// (integrations/fptstaff/sync.ts). Not connected = deferred, sent later with Push now.
 async function runFptstaffPush(payload: { pushId: string }) {
-  const [push] = await db.select().from(fptstaffResultPushes).where(eq(fptstaffResultPushes.id, payload.pushId));
-  if (!push) throw new Error(`Result push ${payload.pushId} not found.`);
-  // Phase E wires the real HTTP client here. Until FPTStaff can be reached the
-  // push row stays 'pending' so it is delivered the moment the connection
-  // exists; the job itself completes so it doesn't retry pointlessly.
-  if (!process.env.FPTSTAFF_BASE_URL) {
-    return { deferred: true, reason: "FPTStaff connection not configured (Phase E)." };
-  }
-  throw new Error("FPTStaff delivery is not implemented yet (Phase E).");
+  const { runResultPush } = await import("../integrations/fptstaff/sync.js");
+  return runResultPush(payload);
 }
 
 // Block 5d: tell the learner their result is out. Not configured email is a
@@ -133,6 +128,9 @@ async function runOne(job: { id: string; job_type: string; payload: Record<strin
       result = await runFptstaffPush(job.payload as { pushId: string });
     } else if (job.job_type === "result_email") {
       result = await runResultEmail(job.payload as { sessionId: string; baseUrl?: string });
+    } else if (job.job_type === "fptstaff_learner_push") {
+      const { runLearnerPush } = await import("../integrations/fptstaff/sync.js");
+      result = await runLearnerPush(job.payload as { userId: string });
     } else {
       throw new Error(`Unknown job type ${job.job_type}`);
     }
@@ -182,7 +180,7 @@ export function startJobRunner() {
     .where(
       and(
         eq(backgroundJobs.status, "running"),
-        sql`${backgroundJobs.jobType} IN ('ai_response_review', 'fptstaff_push', 'result_email')`,
+        sql`${backgroundJobs.jobType} IN ('ai_response_review', 'fptstaff_push', 'result_email', 'fptstaff_learner_push')`,
         lte(backgroundJobs.attempts, MAX_ATTEMPTS)
       )
     )

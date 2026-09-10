@@ -587,23 +587,35 @@ const commitSchema = z.object({
   cohortId: z.string().uuid().optional(),
 });
 
-peopleRouter.post("/import/commit", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
-  const parsed = commitSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid import rows.", detail: parsed.error.message });
+// Applies previewed rows: creates / updates people, puts students into a cohort,
+// issues set-up links. Shared by the file import and the FPTStaff pull (Block 6),
+// which passes source "fptstaff" and each person's FPTStaff id.
+export interface ApplyRowsOptions {
+  rows: z.infer<typeof commitSchema>["rows"];
+  cohortId?: string;
+  sendSetupLinks: boolean;
+  actorId: string;
+  baseUrl: string;
+  source?: "manual" | "fptstaff";
+  fptstaffIds?: Map<string, string>; // email (lower) -> FPTStaff id
+  reason?: string;
+}
+export async function applyImportRows(o: ApplyRowsOptions) {
   // Re-validate against the database - the preview may be minutes old.
-  const again = await previewRows(parsed.data.rows.map((r) => ({ ...r, type: r.type })), null);
+  const again = await previewRows(o.rows.map((r) => ({ ...r, type: r.type })), null);
   let cohort: typeof cohorts.$inferSelect | undefined;
-  if (parsed.data.cohortId) {
-    [cohort] = await db.select().from(cohorts).where(eq(cohorts.id, parsed.data.cohortId));
-    if (!cohort) return res.status(404).json({ error: "Cohort not found." });
+  if (o.cohortId) {
+    [cohort] = await db.select().from(cohorts).where(eq(cohorts.id, o.cohortId));
+    if (!cohort) throw new Error("Cohort not found.");
   }
   const created: string[] = [];
   const studentIds: string[] = [];
   const updated: string[] = [];
+  const skipped: string[] = [];
   const rejected: { line: number; email: string; reasons: string[] }[] = [];
   let emailed = 0;
   const links: { name: string; email: string; setupUrl: string }[] = [];
-  const baseUrl = appBaseUrl(req);
+  const reason = o.reason ?? "bulk import";
   // Invited people cannot sign in until they set their own password, so the
   // placeholder only has to be unguessable - one random hash for the whole
   // batch rather than a slow bcrypt per row.
@@ -614,7 +626,15 @@ peopleRouter.post("/import/commit", requireAuth, requireRole("administrator"), a
       rejected.push({ line: r.line, email: r.email, reasons: r.reasons });
       continue;
     }
-    if (r.action === "skip") continue;
+    const fptstaffId = o.fptstaffIds?.get(r.email.toLowerCase()) ?? null;
+    if (r.action === "skip") {
+      if (r.existingId) {
+        skipped.push(r.existingId);
+        if (r.type === "students") studentIds.push(r.existingId);
+        if (fptstaffId) await db.update(users).set({ fptstaffId, fptstaffSyncedAt: new Date() }).where(and(eq(users.id, r.existingId), sql`${users.fptstaffId} IS NULL`));
+      }
+      continue;
+    }
     const roles = TYPE_ROLES[r.type!];
     if (r.action === "create") {
       const supervisory = r.type !== "students";
@@ -626,7 +646,9 @@ peopleRouter.post("/import/commit", requireAuth, requireRole("administrator"), a
           passwordHash: invitedHash,
           mfaSecret: supervisory ? generateMfaSecret() : null,
           employmentRelationship: r.employment,
-          source: "manual",
+          source: o.source ?? "manual",
+          fptstaffId,
+          fptstaffSyncedAt: fptstaffId ? new Date() : null,
           studentNumber: r.studentNumber,
           idNumberEnc: r.idNumber ? encryptField(r.idNumber) : null,
           idNumberLast4: r.idNumber ? last4(r.idNumber) : null,
@@ -637,10 +659,10 @@ peopleRouter.post("/import/commit", requireAuth, requireRole("administrator"), a
         .returning();
       await db.insert(userRoles).values(roles.map((role) => ({ userId: u.id, role })));
       if (r.type === "students") studentIds.push(u.id);
-      await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "user_created", targetType: "user", targetId: u.id, reason: "bulk import" });
+      await db.insert(auditLog).values({ actorId: o.actorId, action: "user_created", targetType: "user", targetId: u.id, reason });
       created.push(u.id);
-      if (parsed.data.sendSetupLinks) {
-        const setup = await issueSetupLink({ userId: u.id, name: u.name, email: u.email, roles, createdBy: req.auth!.userId, baseUrl });
+      if (o.sendSetupLinks) {
+        const setup = await issueSetupLink({ userId: u.id, name: u.name, email: u.email, roles, createdBy: o.actorId, baseUrl: o.baseUrl });
         if (setup.emailSent) emailed++;
         else links.push({ name: u.name, email: u.email, setupUrl: setup.setupUrl });
       }
@@ -655,8 +677,9 @@ peopleRouter.post("/import/commit", requireAuth, requireRole("administrator"), a
       if (r.type === "students") studentIds.push(r.existingId);
       if (r.registrationNumber) set.registrationNumber = r.registrationNumber;
       if (r.employment) set.employmentRelationship = r.employment;
+      if (fptstaffId) { set.fptstaffId = fptstaffId; set.fptstaffSyncedAt = new Date(); }
       await db.update(users).set(set).where(eq(users.id, r.existingId));
-      await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "user_edited", targetType: "user", targetId: r.existingId, reason: "bulk import: " + r.reasons.join("; ") });
+      await db.insert(auditLog).values({ actorId: o.actorId, action: "user_edited", targetType: "user", targetId: r.existingId, reason: `${reason}: ` + r.reasons.join("; ") });
       updated.push(r.existingId);
     }
   }
@@ -664,19 +687,36 @@ peopleRouter.post("/import/commit", requireAuth, requireRole("administrator"), a
   if (cohort && studentIds.length) {
     const ins = await db
       .insert(cohortMembers)
-      .values(studentIds.map((learnerId) => ({ cohortId: cohort!.id, learnerId, addedBy: req.auth!.userId })))
+      .values(studentIds.map((learnerId) => ({ cohortId: cohort!.id, learnerId, addedBy: o.actorId })))
       .onConflictDoNothing()
       .returning({ learnerId: cohortMembers.learnerId });
     addedToCohort = ins.length;
-    await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "cohort_members_added", targetType: "cohort", targetId: cohort.id, reason: `${addedToCohort} from import` });
+    if (addedToCohort) await db.insert(auditLog).values({ actorId: o.actorId, action: "cohort_members_added", targetType: "cohort", targetId: cohort.id, reason: `${addedToCohort} from ${reason}` });
   }
   await db.insert(auditLog).values({
-    actorId: req.auth!.userId,
+    actorId: o.actorId,
     action: "user_bulk_import",
     targetType: "user",
     targetId: null,
-    reason: `${created.length} created, ${updated.length} updated, ${rejected.length} rejected`,
+    reason: `${reason}: ${created.length} created, ${updated.length} updated, ${skipped.length} unchanged, ${rejected.length} rejected`,
   });
-  return res.json({ created: created.length, updated: updated.length, rejected, emailed, links, addedToCohort, cohortName: cohort?.name ?? null });
+  return { created: created.length, updated: updated.length, unchanged: skipped.length, rejected, emailed, links, addedToCohort, cohortName: cohort?.name ?? null, createdIds: created, updatedIds: updated };
+}
+
+peopleRouter.post("/import/commit", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
+  const parsed = commitSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid import rows.", detail: parsed.error.message });
+  let result;
+  try {
+    result = await applyImportRows({ rows: parsed.data.rows, cohortId: parsed.data.cohortId, sendSetupLinks: parsed.data.sendSetupLinks, actorId: req.auth!.userId, baseUrl: appBaseUrl(req) });
+  } catch (err) {
+    if (err instanceof Error && err.message === "Cohort not found.") return res.status(404).json({ error: err.message });
+    throw err;
+  }
+  // Block 6: people added here go across to FPTStaff too (when connected).
+  const { queueLearnerPushes } = await import("../integrations/fptstaff/sync.js");
+  await queueLearnerPushes([...result.createdIds, ...result.updatedIds]);
+  const { createdIds: _c, updatedIds: _u, ...rest } = result;
+  return res.json(rest);
 });
 

@@ -4,6 +4,7 @@ import { api } from "../../lib/api";
 import { PageHeader, Card, CardHead, Notice, Badge, TypePill, Empty } from "../../components/ui";
 import type { IntakeRoute, Cohort, Qualification } from "@shared/types";
 import { RouteBadge } from "../../components/intake";
+import { ConnectionLine, type FptstaffStatus } from "./FptstaffPanel";
 
 interface ResultRow {
   sessionId: string;
@@ -27,6 +28,7 @@ interface ResultRow {
   assessorName: string;
   pushStatus: "pending" | "sent" | "failed" | null;
   pushSentAt: string | null;
+  pushError: string | null;
   resultEmail: { status: "sent" | "not_connected" | "queued" | "failed"; detail: string | null; at: string | null } | null;
 }
 
@@ -39,6 +41,17 @@ const fmt = (iso: string | null) =>
 export default function AdminResults() {
   const [rows, setRows] = useState<ResultRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [fs, setFs] = useState<FptstaffStatus | null>(null);
+  const [probing, setProbing] = useState(false);
+  const [pushing, setPushing] = useState(false);
+  useEffect(() => { api.get<FptstaffStatus>("/fptstaff/status").then(setFs).catch(() => undefined); }, []);
+  async function probe() { setProbing(true); try { setFs(await api.get<FptstaffStatus>("/fptstaff/status?probe=1")); } catch (e) { setError((e as Error).message); } finally { setProbing(false); } }
+  async function pushNow(sessionIds?: string[]) {
+    setPushing(true);
+    try { const r = await api.post<{ queued: number }>("/fptstaff/push-results", sessionIds ? { sessionIds } : {}); setMessage(`${r.queued} result${r.queued === 1 ? "" : "s"} queued for FPTStaff — delivered within a minute; this page updates as they land.`); setError(null); }
+    catch (e) { setError((e as Error).message); } finally { setPushing(false); }
+  }
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
   const [qualifications, setQualifications] = useState<Qualification[]>([]);
   const [f, setF] = useState({ cohortId: "", qualificationId: "", outcome: "", from: "", to: "", q: "" });
@@ -82,6 +95,8 @@ export default function AdminResults() {
         subtitle="Signed-off results and their hand-over to FPTStaff, where moderation and verification run for passed learners."
       />
       {error && <Notice kind="error">{error}</Notice>}
+      {message && <Notice kind="success">{message}</Notice>}
+      <div className="mb-4"><ConnectionLine status={fs} onProbe={probe} probing={probing} /></div>
 
       <div className="grid grid-cols-3 gap-4 mb-6">
         <Card className="p-5">
@@ -96,7 +111,7 @@ export default function AdminResults() {
         <Card className="p-5">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">Awaiting FPTStaff hand-over</p>
           <p className="font-display text-3xl font-extrabold mt-1 tabular text-amber-700">{rows ? pending : "—"}</p>
-          <p className="t-sub">Delivered automatically once FPTStaff is connected</p>
+          {fs?.connected && pending > 0 ? <button type="button" className="lnk" disabled={pushing} onClick={() => pushNow()}>{pushing ? "Queuing…" : "Push now"}</button> : <p className="t-sub">{fs?.connected ? "Every signed-off result is delivered within a minute" : "Delivered automatically once FPTStaff is connected"}</p>}
         </Card>
       </div>
 
@@ -190,9 +205,9 @@ export default function AdminResults() {
                     {r.pushStatus === "sent" ? (
                       <Badge tone="green">Sent {fmt(r.pushSentAt)}</Badge>
                     ) : r.pushStatus === "failed" ? (
-                      <Badge tone="amber">Failed — will retry</Badge>
+                      <><span title={r.pushError ?? ""}><Badge tone="amber">Failed</Badge></span>{fs?.connected && <button type="button" className="lnk block mt-1 text-[12px]" onClick={() => pushNow([r.sessionId])}>Retry</button>}</>
                     ) : (
-                      <Badge tone="gray">Queued</Badge>
+                      <Badge tone="gray">{fs?.connected ? "Sending…" : "Queued"}</Badge>
                     )}
                   </td>
                   <td className="text-right whitespace-nowrap">

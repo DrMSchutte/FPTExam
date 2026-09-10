@@ -124,6 +124,11 @@ usersRouter.post(
       targetType: "user",
       targetId: created.id,
     });
+    // Block 6: a learner added here goes across to FPTStaff too (when connected).
+    if (roles.includes("learner") && !fptstaffId) {
+      const { queueLearnerPushes } = await import("../integrations/fptstaff/sync.js");
+      await queueLearnerPushes([created.id]);
+    }
 
     // The set-up link: emailed when email is connected, otherwise handed back
     // for the Administrator to send. Either way it is the person's way in.

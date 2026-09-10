@@ -4,6 +4,7 @@ import { api } from "../../lib/api";
 import type { UserRole, EmploymentRelationship, PersonRow, PeopleListResponse, PersonType, UserStatus, ImportPreviewRow, Cohort } from "@shared/types";
 import { PageHeader, Card, CardHead, Notice, Badge, Empty, PlusIcon } from "../../components/ui";
 import SetupLinkPanel, { type SetupIssue } from "../../components/SetupLinkPanel";
+import FptstaffPanel from "./FptstaffPanel";
 import type { BadgeTone } from "../../components/ui";
 
 // Register People at scale (build plan Block 1): one tab per kind of person,
@@ -48,7 +49,6 @@ export function StatusBadge({ status }: { status: UserStatus }) {
   return <Badge tone={m.tone}>{m.label}</Badge>;
 }
 
-const FPTSTAFF_CONNECTED = false;
 const PAGE_SIZE = 50;
 const fmtDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "—");
 
@@ -71,6 +71,7 @@ export default function AdminUsers() {
   const [setup, setSetup] = useState<{ name: string; email: string; issue: SetupIssue } | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showFptstaff, setShowFptstaff] = useState(false);
   const [chaseLinks, setChaseLinks] = useState<{ name: string; email: string; setupUrl: string }[] | null>(null);
 
   const setParam = (patch: Record<string, string | null>) => {
@@ -153,10 +154,13 @@ export default function AdminUsers() {
     <>
       <PageHeader
         title="Register People"
-        subtitle="Students, assessors and moderators, invigilators and administrators — searched, filtered and imported in bulk. Pulled from FPTStaff once it is connected."
+        subtitle="Students, assessors and moderators, invigilators and administrators — searched, filtered and imported in bulk, or pulled from FPTStaff by section."
         action={
           <div className="flex items-center gap-2">
-            <button className="btn-ghost whitespace-nowrap" onClick={() => { setShowImport((v) => !v); setShowCreate(false); }}>
+            <button className="btn-ghost whitespace-nowrap" onClick={() => { setShowFptstaff((v) => !v); setShowImport(false); setShowCreate(false); }}>
+              {showFptstaff ? "Close FPTStaff" : "Pull from FPTStaff"}
+            </button>
+            <button className="btn-ghost whitespace-nowrap" onClick={() => { setShowImport((v) => !v); setShowCreate(false); setShowFptstaff(false); }}>
               {showImport ? "Close import" : "Import from file"}
             </button>
             <button className="btn whitespace-nowrap" onClick={() => { setShowCreate((v) => !v); setShowImport(false); }}>
@@ -186,6 +190,7 @@ export default function AdminUsers() {
       )}
 
       {showCreate && <RegisterForm defaultType={current.registerAs} onDone={(m, s) => { setMessage(m); setSetup(s); setShowCreate(false); load(); }} onError={setError} />}
+      {showFptstaff && <FptstaffPanel onDone={(m) => { setMessage(m); setError(null); load(); }} onError={setError} onLinks={(l) => setChaseLinks(l)} />}
       {showImport && <ImportPanel defaultType={tab} onDone={(m) => { setMessage(m); load(); }} onError={setError} />}
 
       {/* ---- Tabs ---- */}
@@ -400,8 +405,8 @@ function RegisterForm({ defaultType, onDone, onError }: { defaultType: RegisterT
           </div>
         </div>
 
-        {current.fromFptstaff && !FPTSTAFF_CONNECTED && (
-          <p className="t-sub">Until FPTStaff is connected, add their details here. Anyone added here is pushed across to FPTStaff automatically once the link is live. For many people at once, use <strong>Import from file</strong>.</p>
+        {current.fromFptstaff && (
+          <p className="t-sub">People on FPTStaff are pulled in by section from the FPTStaff panel above. Anyone added here is pushed across to FPTStaff automatically (when it is connected). For many people at once, use <strong>Import from file</strong>.</p>
         )}
 
         <div className="rounded-lg border border-line bg-surface-2/60 p-4 space-y-3.5">

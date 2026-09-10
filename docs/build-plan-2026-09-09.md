@@ -230,6 +230,26 @@ and is tested in a real browser.
 back with duplicate guard; results and Statements pushed on sign-off; moderation /
 verification / certification stay in FPTStaff. Contract written for the FPTStaff side.
 
+**FPT Exam side delivered 10 Sep 2026.** *Register People* has **Pull from FPTStaff**: the
+connection line (never the key) with **Test connection**, FPTStaff's sections with learner
+counts and the cohort here that mirrors each, tick the sections and **Pull into cohorts** —
+each section becomes one cohort named after it (linked to the qualification when the SAQA
+ID is known), learners are registered or updated, matched by ID number so nobody is ever
+duplicated, and a re-pull picks up new learners without touching the rest. **Pull assessors
+& invigilators** brings staff across with both roles where FPTStaff has both. Every learner
+registered on FPT Exam by hand or by file import is **pushed to FPTStaff** automatically
+when it is connected and gets its FPTStaff reference back; a **Push N added here** button
+sends across everyone registered before the link existed. On sign-off the result goes to
+FPTStaff **with the Statement of Results PDF**, the integrity recommendation, the assessor
+and the sitting; *Results* shows the connection line, *Sent* with the time or *Failed* with
+the reason and *Retry*, and **Push now** for everything that queued while FPTStaff was not
+connected. Every movement is audited. A **sample FPTStaff** ships inside FPT Exam
+(`FPTSTAFF_MOCK=yes`: three sections, 29 learners marked SAMPLE, four staff, and a receiving
+end that shows what arrived) so the whole route runs today. For the FPTStaff side there is a
+**drop-in reference implementation** (`fptstaff-sync-reference.md`) and the contract
+(`fptstaff-contract.md`). What remains for Block 6 is on FPTStaff: expose the five routes,
+issue the key, set the two secrets on FPT Exam, press *Test connection*, then *Push now*.
+
 ### Block 7 — Phase F: Curricula Builder connection live
 *What you get:* the two Curricula Builder routes become usable — released QCTO papers
 and other courses listed and pulled in. The contract is already written
@@ -255,6 +275,10 @@ the command-line proof. What remains for Block 7 is on Curricula Builder: expose
 export, issue the key, set the two secrets on FPT Exam, press *Test connection*.
 
 ## Decisions taken 9 Sep 2026 (were the open decisions)
+
+*Added 10 Sep 2026:* **one proctoring level only.** Every sitting is fully invigilated as
+built (full screen, camera and screen captures, locks, live invigilator at 1:30). A lighter
+"recorded" mode was considered and declined.
 
 1. **Student identifier — the ID number.** The learner's South African ID number is the
    unique student identifier on FPT Exam and on the Statement of Results (stored
