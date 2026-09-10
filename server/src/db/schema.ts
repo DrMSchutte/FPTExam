@@ -241,6 +241,9 @@ export const assessmentInstruments = pgTable("assessment_instruments", {
   // The question list as it was before the last AI revision ("Fix the gaps"),
   // so an Administrator can restore it. One step back only.
   previousQuestions: jsonb("previous_questions"),
+  // Block 7: when a newer version of the same Curricula Builder assessment is
+  // pulled in, the old paper points at it and can no longer be scheduled.
+  supersededById: uuid("superseded_by_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

@@ -110,6 +110,9 @@ sittingsRouter.post(
     if (instrument.qualificationId !== qualificationId) {
       return res.status(400).json({ error: "That paper belongs to a different qualification." });
     }
+    if (instrument.supersededById) {
+      return res.status(400).json({ error: "A newer version of this paper has been pulled in from Curricula Builder.", detail: "Schedule the current version instead; this one stays only for sittings already written on it." });
+    }
     if (instrument.intakeStatus !== "ready" && instrument.intakeStatus !== "override") {
       return res.status(400).json({
         error: instrument.intakeStatus === "checking" ? "This paper is still being checked against the assessment standard." : "This paper does not meet the assessment standard and cannot be scheduled.",

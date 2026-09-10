@@ -120,6 +120,13 @@
       "when": 1788990319304,
       "tag": "0016_locked_paper",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1789026255672,
+      "tag": "0017_curricula_builder_live",
+      "breakpoints": true
     }
   ]
 }

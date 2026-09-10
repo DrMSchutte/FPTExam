@@ -50,9 +50,16 @@ should be listed — a draft on Curricula Builder must not be schedulable on FPT
 
 `qctoRegistrationType`, `saqaQualificationId`, `nqfLevel` may be `null` for `kind: other`.
 
+Where several versions of one assessment have been released, list every version — same
+`id`, its own `version`. FPT Exam shows a later version as "new version — pull in" and,
+once pulled, marks the older paper superseded (it stays for sittings already written on
+it; it cannot be scheduled again).
+
 ## 2. One assessment, in full
 
-`GET /api/exam-export/assessments/{id}`
+`GET /api/exam-export/assessments/{id}?version={version}`
+
+`version` is optional; without it, return the latest release. FPT Exam always passes it.
 
 Everything in the summary above, plus:
 
@@ -104,4 +111,15 @@ and the standard check will block a paper without one.
    Builder's `id`. The same `id` + `version` is never imported twice.
 4. Runs the standard check; the gate applies as for any other paper.
 5. The paper is read-only on FPT Exam. Corrections are made on Curricula Builder and
-   pulled again as a new version.
+   pulled again as a new version, which supersedes the old paper on FPT Exam.
+
+## Testing before Curricula Builder is ready
+
+With the FPT Exam secret `CURRICULA_BUILDER_MOCK=yes`, FPT Exam serves a sample of this
+export itself (three QCTO releases — one of them re-released — and one CPD assessment) and
+points at it, so the whole route can be exercised: list, pull, standard check, schedule,
+sit, mark, Statement of Results. Every sample title starts with "SAMPLE". Remove the
+secret and set the two real ones when Curricula Builder's export is live.
+
+A drop-in reference implementation for the Curricula Builder side is in
+`curricula-builder-export-reference.md`.

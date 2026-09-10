@@ -182,8 +182,8 @@ export default function AdminAssessments() {
                       <td className="tabular">{i.questions.length}</td>
                       <td className="tabular">{i.timeAllocationMinutes} min</td>
                       <td>
-                        <GateBadge status={i.intakeStatus} />
-                        <p className="t-sub mt-1"><VerdictBadge verdict={i.qualityReview?.verdict ?? null} /></p>
+                        {i.supersededById ? <Badge tone="gray">Superseded</Badge> : <GateBadge status={i.intakeStatus} />}
+                        <p className="t-sub mt-1">{i.supersededById ? "A newer version was pulled in from Curricula Builder" : <VerdictBadge verdict={i.qualityReview?.verdict ?? null} />}</p>
                       </td>
                       <td className="text-right">
                         <Link to={`/admin/assessments/${i.id}`} className="lnk">Open</Link>
@@ -500,34 +500,47 @@ interface CbSummary {
   version: string;
   updatedAt?: string;
   importedInstrumentId: string | null;
+  importedStatus?: string | null;
+  superseded?: boolean;
+  earlierVersion?: { id: string; version: string } | null;
 }
+interface CbStatus { connected: boolean; sample: boolean; host: string | null; probe?: { ok: boolean; step: string; message: string; qcto?: number; other?: number; ms: number } }
 
 function CurriculaBuilderPanel({ kind, onStart, onDone, onError }: PanelProps & { kind: "qcto" | "other" }) {
   const [connected, setConnected] = useState<boolean | null>(null);
+  const [status, setStatus] = useState<CbStatus | null>(null);
+  const [probing, setProbing] = useState(false);
   const [list, setList] = useState<CbSummary[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [importing, setImporting] = useState<string | null>(null);
   const job = useJob();
 
+  const loadList = () => api.get<CbSummary[]>(`/assessments/curricula-builder/assessments?kind=${kind}`).then(setList);
   useEffect(() => {
     setList(null);
     setListError(null);
     api
-      .get<{ connected: boolean }>("/assessments/curricula-builder/status")
+      .get<CbStatus>("/assessments/curricula-builder/status")
       .then((s) => {
+        setStatus(s);
         setConnected(s.connected);
-        if (s.connected) return api.get<CbSummary[]>(`/assessments/curricula-builder/assessments?kind=${kind}`).then(setList);
+        if (s.connected) return loadList();
       })
       .catch((err) => setListError((err as Error).message));
-  }, [kind]);
+  }, [kind]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function probe() {
+    setProbing(true);
+    try { setStatus(await api.get<CbStatus>("/assessments/curricula-builder/status?probe=1")); } catch (err) { onError((err as Error).message); } finally { setProbing(false); }
+  }
 
   async function pull(a: CbSummary) {
     onStart();
     setImporting(a.id);
     try {
-      const done = await job.run(() => api.post<{ jobId: string }>("/assessments/curricula-builder/import", { externalId: a.id, kind }));
+      const done = await job.run(() => api.post<{ jobId: string }>("/assessments/curricula-builder/import", { externalId: a.id, kind, version: a.version }));
       onDone(done, a.title);
-      setList((l) => l?.map((x) => (x.id === a.id ? { ...x, importedInstrumentId: done.instrument.id } : x)) ?? null);
+      await loadList().catch(() => undefined);
     } catch (err) {
       onError((err as Error).message);
     } finally {
@@ -536,6 +549,17 @@ function CurriculaBuilderPanel({ kind, onStart, onDone, onError }: PanelProps & 
   }
 
   if (connected === null && !listError) return <p className="text-sm text-ink-muted">Checking the Curricula Builder connection…</p>;
+
+  const connectionLine = status && (
+    <div className="flex items-center gap-3 flex-wrap rounded-lg border border-line bg-surface px-3.5 py-2 text-[13px]">
+      <span className={"h-2.5 w-2.5 rounded-full " + (status.probe ? (status.probe.ok ? "bg-brand-500" : "bg-red-500") : status.connected ? "bg-brand-300" : "bg-ink-faint")} />
+      <span className="font-semibold">{status.connected ? (status.sample ? "Sample export" : `Connected · ${status.host}`) : "Not connected"}</span>
+      {status.sample && <Badge tone="amber">Sample data — remove CURRICULA_BUILDER_MOCK when Curricula Builder is live</Badge>}
+      {status.probe && <span className={status.probe.ok ? "text-ink-muted" : "text-red-700"}>{status.probe.message}{status.probe.ok ? ` ${status.probe.qcto ?? 0} QCTO · ${status.probe.other ?? 0} other · ${status.probe.ms} ms` : ""}</span>}
+      <span className="flex-1" />
+      {status.connected && <button type="button" className="btn-ghost btn-sm" onClick={probe} disabled={probing}>{probing ? "Testing…" : "Test connection"}</button>}
+    </div>
+  );
 
   if (connected === false) {
     return (
@@ -555,6 +579,7 @@ function CurriculaBuilderPanel({ kind, onStart, onDone, onError }: PanelProps & 
 
   return (
     <div className="space-y-4">
+      {connectionLine}
       {listError && <Notice kind="error">{listError}</Notice>}
       {!list ? (
         !listError && <p className="text-sm text-ink-muted">Reading released assessments from Curricula Builder…</p>
@@ -581,10 +606,23 @@ function CurriculaBuilderPanel({ kind, onStart, onDone, onError }: PanelProps & 
                   </div>
                   <p className="t-sub">{[a.saqaQualificationId ? `SAQA ${a.saqaQualificationId}` : null, a.nqfLevel ? `NQF Level ${a.nqfLevel}` : null].filter(Boolean).join(" · ")}</p>
                 </td>
-                <td className="tabular">{a.version}</td>
-                <td className="text-right">
+                <td className="tabular">
+                  {a.version}
+                  {a.updatedAt && <p className="t-sub">released {fmt(a.updatedAt)}</p>}
+                </td>
+                <td className="text-right whitespace-nowrap">
                   {a.importedInstrumentId ? (
-                    <Link to={`/admin/assessments/${a.importedInstrumentId}`} className="lnk">On FPT Exam · open</Link>
+                    <>
+                      {a.superseded ? <Badge tone="gray">Superseded</Badge> : <Badge tone="green">On FPT Exam</Badge>}
+                      <Link to={`/admin/assessments/${a.importedInstrumentId}`} className="lnk ml-2">open</Link>
+                    </>
+                  ) : a.earlierVersion ? (
+                    <>
+                      <span className="t-sub mr-2">replaces {a.earlierVersion.version}</span>
+                      <button type="button" className="btn btn-sm" disabled={job.busy} onClick={() => pull(a)}>
+                        {importing === a.id ? "Pulling…" : "Pull new version"}
+                      </button>
+                    </>
                   ) : (
                     <button type="button" className="btn btn-sm" disabled={job.busy} onClick={() => pull(a)}>
                       {importing === a.id ? "Pulling…" : "Pull in"}

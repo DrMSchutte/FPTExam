@@ -23,6 +23,7 @@ import { runMigrations, ensureBootstrapAdmin } from "./db/bootstrap.js";
 import { assessorRouter } from "./routes/assessor.js";
 import { assessmentsRouter } from "./routes/assessments.js";
 import { startJobRunner } from "./jobs/runner.js";
+import { sampleExportRouter, isSampleExportEnabled } from "./integrations/curriculaBuilder/sampleExport.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -46,6 +47,8 @@ app.use("/api/sit", sitRouter);
 app.use("/api/qualifications", qualificationsRouter);
 app.use("/api/instruments", instrumentsRouter);
 app.use("/api/assessments", assessmentsRouter);
+// Block 7: the sample Curricula Builder export (CURRICULA_BUILDER_MOCK=yes only).
+if (isSampleExportEnabled()) app.use("/api/exam-export", sampleExportRouter);
 app.use("/api/sittings", sittingsRouter);
 // sessionsRouter's own paths already start with /sessions or /me, so it
 // mounts at the API root rather than under an extra prefix.

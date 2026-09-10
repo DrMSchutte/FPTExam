@@ -235,6 +235,25 @@ verification / certification stay in FPTStaff. Contract written for the FPTStaff
 and other courses listed and pulled in. The contract is already written
 (`curricula-builder-contract.md`); Curricula Builder has to expose it.
 
+**FPT Exam side delivered 10 Sep 2026.** The connection line under *QCTO FISA / EISA* and
+*Other course from Curricula Builder* shows what FPT Exam is connected to (never the
+key) and **Test connection** runs a live probe that says exactly where it stops —
+unreachable, key refused, or a response that does not match the contract (naming the
+field). The list marks every release: *On FPT Exam*, *Superseded*, or **Pull new
+version** when an earlier version of the same assessment is already here. Pulling a new
+version **supersedes** the old paper: it stays for the sittings already written on it,
+shows a banner pointing at the current version, and cannot be scheduled again (the
+scheduler refuses it with a plain message). Every pull is audited. A **sample export**
+ships inside FPT Exam: with the Repl secret `CURRICULA_BUILDER_MOCK=yes` it stands in for
+Curricula Builder (three QCTO releases, one re-released, and one CPD assessment — every
+title starts with SAMPLE) so the whole route runs today: list → pull → standard check →
+schedule → sit → mark → Statement. Remove the secret and set the two real ones when
+Curricula Builder is live. For the Curricula Builder side there is a **drop-in reference
+implementation** (`curricula-builder-export-reference.md`): the complete Express router,
+the four mapping points to fill in from Curricula Builder's data model, key issuing and
+the command-line proof. What remains for Block 7 is on Curricula Builder: expose the
+export, issue the key, set the two secrets on FPT Exam, press *Test connection*.
+
 ## Decisions taken 9 Sep 2026 (were the open decisions)
 
 1. **Student identifier — the ID number.** The learner's South African ID number is the

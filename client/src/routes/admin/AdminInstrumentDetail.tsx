@@ -386,6 +386,11 @@ export default function AdminInstrumentDetail() {
           </div>
         }
       />
+      {instrument.supersededById && (
+        <div className="mb-4 rounded-lg border border-line bg-surface-2 px-4 py-3 text-[13.5px]">
+          <span className="font-semibold">This version has been superseded.</span> A newer release of this assessment was pulled in from Curricula Builder — <Link to={`/admin/assessments/${instrument.supersededById}`} className="lnk">open the current version</Link>. This one stays for the sittings already written on it and cannot be scheduled again.
+        </div>
+      )}
       {error && <Notice kind="error">{error}</Notice>}
       {message && <Notice kind="success">{message}</Notice>}
       <JobProgressPanel title="Assessment-standard check" stages={CHECK_STAGES} progress={progress} active={checking} />

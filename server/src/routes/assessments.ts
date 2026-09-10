@@ -21,6 +21,8 @@ import { extractTextFromDocument, DocumentExtractionError } from "../integration
 import { fetchSaqaExtract, SaqaExtractError } from "../integrations/saqa/fetchQualification.js";
 import {
   isCurriculaBuilderConfigured,
+  curriculaBuilderConnection,
+  probeCurriculaBuilder,
   listCurriculaBuilderAssessments,
   fetchCurriculaBuilderAssessment,
   CurriculaBuilderError,
@@ -529,8 +531,12 @@ assessmentsRouter.post(
 // Routes: QCTO FISA/EISA and Other courses - linked in from Curricula Builder.
 // ---------------------------------------------------------------------------------
 
-assessmentsRouter.get("/curricula-builder/status", requireAuth, requireRole("administrator"), (_req, res) => {
-  res.json({ connected: isCurriculaBuilderConfigured() });
+// Block 7: the connection as the Administrator sees it (never the key), and
+// with ?probe=1 a live test - reachable, key accepted, contract matched.
+assessmentsRouter.get("/curricula-builder/status", requireAuth, requireRole("administrator"), async (req, res) => {
+  const conn = curriculaBuilderConnection();
+  if (req.query.probe) return res.json({ ...conn, probe: await probeCurriculaBuilder() });
+  res.json(conn);
 });
 
 assessmentsRouter.get("/curricula-builder/assessments", requireAuth, requireRole("administrator"), async (req, res) => {
@@ -538,20 +544,29 @@ assessmentsRouter.get("/curricula-builder/assessments", requireAuth, requireRole
   if (!isCurriculaBuilderConfigured()) return res.status(503).json({ error: "Curricula Builder is not connected yet.", detail: "Set CURRICULA_BUILDER_BASE_URL and CURRICULA_BUILDER_API_KEY in the Repl's Secrets." });
   try {
     const list = await listCurriculaBuilderAssessments(kind);
-    // Mark the ones already on FPT Exam so the same version is not pulled twice.
+    // Mark the ones already on FPT Exam so the same version is not pulled twice,
+    // and the ones where an earlier version is here (a new release to pull in).
     const existing = await db
-      .select({ externalRef: assessmentInstruments.externalRef, version: assessmentInstruments.version, id: assessmentInstruments.id })
+      .select({ externalRef: assessmentInstruments.externalRef, version: assessmentInstruments.version, id: assessmentInstruments.id, supersededById: assessmentInstruments.supersededById, intakeStatus: assessmentInstruments.intakeStatus })
       .from(assessmentInstruments)
       .where(isNotNull(assessmentInstruments.externalRef));
-    const have = new Map(existing.map((e) => [`${e.externalRef}@@${e.version}`, e.id]));
-    return res.json(list.map((a) => ({ ...a, importedInstrumentId: have.get(`${a.id}@@${a.version}`) ?? null })));
+    const have = new Map(existing.map((e) => [`${e.externalRef}@@${e.version}`, e]));
+    const current = new Map<string, { id: string; version: string }>();
+    for (const e of existing) if (!e.supersededById) current.set(e.externalRef!, { id: e.id, version: e.version });
+    return res.json(
+      list.map((a) => {
+        const same = have.get(`${a.id}@@${a.version}`);
+        const cur = current.get(a.id);
+        return { ...a, importedInstrumentId: same?.id ?? null, importedStatus: same?.intakeStatus ?? null, superseded: Boolean(same?.supersededById), earlierVersion: !same && cur ? cur : null };
+      })
+    );
   } catch (err) {
     if (err instanceof CurriculaBuilderError) return res.status(502).json({ error: "Curricula Builder could not be read.", detail: err.message });
     throw err;
   }
 });
 
-const importSchema = z.object({ externalId: z.string().min(1), kind: z.enum(["qcto", "other"]) });
+const importSchema = z.object({ externalId: z.string().min(1), kind: z.enum(["qcto", "other"]), version: z.string().min(1).optional() });
 
 assessmentsRouter.post("/curricula-builder/import", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
   const parsed = importSchema.safeParse(req.body);
@@ -566,7 +581,7 @@ assessmentsRouter.post("/curricula-builder/import", requireAuth, requireRole("ad
     await setProgress(jobId, 1, total, "Fetching the assessment from Curricula Builder", externalId);
     let cb;
     try {
-      cb = await fetchCurriculaBuilderAssessment(externalId);
+      cb = await fetchCurriculaBuilderAssessment(externalId, parsed.data.version);
     } catch (err) {
       if (err instanceof CurriculaBuilderError) return { error: "Curricula Builder could not be read.", detail: err.message };
       throw err;
@@ -628,8 +643,16 @@ assessmentsRouter.post("/curricula-builder/import", requireAuth, requireRole("ad
       await db.update(assessmentInstruments).set({ intakeStatus: "blocked" }).where(eq(assessmentInstruments.id, created.id));
       console.error(`Standard check failed for instrument ${created.id}:`, err);
     }
+    // Block 7: an earlier version of the same assessment is superseded - it
+    // stays for the sittings already written on it, but cannot be scheduled again.
+    const superseded = await db
+      .update(assessmentInstruments)
+      .set({ supersededById: created.id })
+      .where(and(eq(assessmentInstruments.externalRef, cb.id), sql`${assessmentInstruments.id} <> ${created.id}`, sql`${assessmentInstruments.supersededById} IS NULL`))
+      .returning({ id: assessmentInstruments.id, version: assessmentInstruments.version });
+    await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "curricula_builder_import", targetType: "instrument", targetId: created.id, reason: `${cb.id} ${cb.version}${superseded.length ? ` supersedes ${superseded.map((x) => x.version).join(", ")}` : ""}` });
     await setProgress(jobId, 4, total, "Saved");
-    return { instrumentId: created.id, questionCount: cb.questions.length, coverageNotes: "" };
+    return { instrumentId: created.id, questionCount: cb.questions.length, coverageNotes: superseded.length ? `Replaces version ${superseded.map((x) => x.version).join(", ")} — the old paper can no longer be scheduled.` : "" };
   });
 
   return res.status(202).json({ jobId });

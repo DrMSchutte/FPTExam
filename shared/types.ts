@@ -357,6 +357,7 @@ export interface AssessmentInstrument {
   qualityReviewedAt: string | null;
   intakeRoute: IntakeRoute;
   externalRef: string | null;
+  supersededById?: string | null;
   intakeStatus: IntakeStatus;
   intakeOverrideReason: string | null;
   sourceFiles: string[] | null;

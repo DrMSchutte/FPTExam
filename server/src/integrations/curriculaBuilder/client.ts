@@ -51,15 +51,55 @@ const fullSchema = summarySchema.extend({
 export type CurriculaBuilderSummary = z.infer<typeof summarySchema>;
 export type CurriculaBuilderAssessment = z.infer<typeof fullSchema>;
 
-function config(): { baseUrl: string; apiKey: string } | null {
+// Block 7: with CURRICULA_BUILDER_MOCK=yes the sample export FPT Exam serves
+// itself stands in for Curricula Builder (sampleExport.ts), so the whole route
+// can be exercised before the real export exists.
+export const isSampleMode = () => /^(yes|true|1)$/i.test(process.env.CURRICULA_BUILDER_MOCK ?? "");
+
+function config(): { baseUrl: string; apiKey: string; sample: boolean } | null {
+  if (isSampleMode()) return { baseUrl: `http://127.0.0.1:${process.env.PORT ?? 4000}`, apiKey: process.env.CURRICULA_BUILDER_API_KEY || "sample", sample: true };
   const baseUrl = process.env.CURRICULA_BUILDER_BASE_URL?.replace(/\/+$/, "");
   const apiKey = process.env.CURRICULA_BUILDER_API_KEY;
   if (!baseUrl || !apiKey) return null;
-  return { baseUrl, apiKey };
+  return { baseUrl, apiKey, sample: false };
 }
 
 export function isCurriculaBuilderConfigured(): boolean {
   return config() !== null;
+}
+
+// What the Administrator sees about the connection (never the key).
+export function curriculaBuilderConnection(): { connected: boolean; sample: boolean; host: string | null } {
+  const cfg = config();
+  if (!cfg) return { connected: false, sample: false, host: null };
+  let host: string | null = null;
+  try { host = cfg.sample ? "sample export on this server" : new URL(cfg.baseUrl).host; } catch { host = cfg.baseUrl; }
+  return { connected: true, sample: cfg.sample, host };
+}
+
+// A live test of the connection: reachable, key accepted, list matches the contract.
+export interface ProbeResult { ok: boolean; step: "reach" | "auth" | "contract" | "done"; message: string; qcto?: number; other?: number; ms: number }
+export async function probeCurriculaBuilder(): Promise<ProbeResult> {
+  const t0 = Date.now();
+  const cfg = config();
+  if (!cfg) return { ok: false, step: "reach", message: "Not connected: CURRICULA_BUILDER_BASE_URL and CURRICULA_BUILDER_API_KEY are not set.", ms: 0 };
+  let res: Response;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    res = await fetch(`${cfg.baseUrl}/api/exam-export/assessments?kind=qcto`, { headers: { Authorization: `Bearer ${cfg.apiKey}`, Accept: "application/json" }, signal: controller.signal });
+    clearTimeout(timer);
+  } catch (err) {
+    return { ok: false, step: "reach", message: `Could not reach ${cfg.sample ? "the sample export" : cfg.baseUrl}: ${err instanceof Error ? err.message : String(err)}. Check CURRICULA_BUILDER_BASE_URL and that Curricula Builder is running.`, ms: Date.now() - t0 };
+  }
+  if (res.status === 401 || res.status === 403) return { ok: false, step: "auth", message: `Curricula Builder refused the key (${res.status}). Check CURRICULA_BUILDER_API_KEY matches the key issued to FPT Exam.`, ms: Date.now() - t0 };
+  if (!res.ok) return { ok: false, step: "reach", message: `Curricula Builder answered ${res.status} for /api/exam-export/assessments. The export is not exposed at that address yet.`, ms: Date.now() - t0 };
+  const body = await res.json().catch(() => null);
+  const parsed = z.object({ assessments: z.array(summarySchema) }).safeParse(body);
+  if (!parsed.success) return { ok: false, step: "contract", message: `Reached and authorised, but the list does not match the contract: ${parsed.error.issues[0]?.path.join(".")} ${parsed.error.issues[0]?.message}.`, ms: Date.now() - t0 };
+  let other = 0;
+  try { other = (await listCurriculaBuilderAssessments("other")).length; } catch { /* the qcto list is enough to call it connected */ }
+  return { ok: true, step: "done", message: cfg.sample ? "Sample export answering on this server." : `Connected to ${new URL(cfg.baseUrl).host}.`, qcto: parsed.data.assessments.length, other, ms: Date.now() - t0 };
 }
 
 async function call(pathname: string): Promise<unknown> {
@@ -89,8 +129,8 @@ export async function listCurriculaBuilderAssessments(kind: CurriculaBuilderKind
   return parsed.data.assessments;
 }
 
-export async function fetchCurriculaBuilderAssessment(id: string): Promise<CurriculaBuilderAssessment> {
-  const body = await call(`/api/exam-export/assessments/${encodeURIComponent(id)}`);
+export async function fetchCurriculaBuilderAssessment(id: string, version?: string): Promise<CurriculaBuilderAssessment> {
+  const body = await call(`/api/exam-export/assessments/${encodeURIComponent(id)}${version ? `?version=${encodeURIComponent(version)}` : ""}`);
   const parsed = fullSchema.safeParse(body);
   if (!parsed.success) throw new CurriculaBuilderError(`Curricula Builder's assessment did not match the contract: ${parsed.error.message}`);
   return parsed.data;
