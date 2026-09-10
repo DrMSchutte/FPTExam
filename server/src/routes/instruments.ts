@@ -21,6 +21,8 @@ import type { ProgressHook } from "../ai/longCall.js";
 export const wordsProgress = (jobId: string, step: number, total: number, label: string, prefix?: string): ProgressHook =>
   ({ words }) => setProgress(jobId, step, total, label, `${prefix ? prefix + " · " : ""}about ${words.toLocaleString("en-ZA")} words written so far`);
 import type { Question, InstrumentQualityReview } from "../types.js";
+import { loadAlignment, renderAlignment } from "../results/alignment.js";
+import { sql } from "drizzle-orm";
 
 export const instrumentsRouter = Router();
 
@@ -590,3 +592,48 @@ instrumentsRouter.patch(
     return res.json({ ...updated, recheckJobId: jobId });
   }
 );
+
+
+// ---- Retire / delete a paper, and the alignment matrix report -----------------------------
+//
+//   POST   /instruments/:id/retire { reason }   out of use; kept for the sittings written on it; never scheduled again
+//   POST   /instruments/:id/unretire
+//   DELETE /instruments/:id                     only when no sitting was ever scheduled on it
+//   GET    /instruments/:id/alignment.pdf       the alignment matrix report
+
+instrumentsRouter.post("/:id/retire", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
+  const parsed = z.object({ reason: z.string().trim().min(3).max(300) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Give a reason (3-300 characters)." });
+  const [row] = await db.update(assessmentInstruments).set({ retiredAt: new Date(), retireReason: parsed.data.reason }).where(eq(assessmentInstruments.id, req.params.id)).returning();
+  if (!row) return res.status(404).json({ error: "Instrument not found." });
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "instrument_retired", targetType: "instrument", targetId: row.id, reason: parsed.data.reason });
+  return res.json(row);
+});
+
+instrumentsRouter.post("/:id/unretire", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
+  const [row] = await db.update(assessmentInstruments).set({ retiredAt: null, retireReason: null }).where(eq(assessmentInstruments.id, req.params.id)).returning();
+  if (!row) return res.status(404).json({ error: "Instrument not found." });
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "instrument_unretired", targetType: "instrument", targetId: row.id });
+  return res.json(row);
+});
+
+instrumentsRouter.delete("/:id", requireAuth, requireRole("administrator"), async (req: AuthedRequest, res) => {
+  const [row] = await db.select().from(assessmentInstruments).where(eq(assessmentInstruments.id, req.params.id));
+  if (!row) return res.status(404).json({ error: "Instrument not found." });
+  const [{ n }] = await db.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM exam_sittings WHERE instrument_id = ${row.id}`).then((r) => r.rows);
+  if (n > 0) return res.status(409).json({ error: `This paper has ${n} sitting${n === 1 ? "" : "s"} scheduled or written on it and cannot be deleted.`, detail: "Retire it instead: it stays for those sittings and can never be scheduled again." });
+  await db.execute(sql`UPDATE assessment_instruments SET superseded_by_id = NULL WHERE superseded_by_id = ${row.id}`);
+  await db.delete(assessmentInstruments).where(eq(assessmentInstruments.id, row.id));
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "instrument_deleted", targetType: "instrument", targetId: row.id, reason: `${row.version} (${row.intakeRoute})` });
+  return res.json({ ok: true });
+});
+
+instrumentsRouter.get("/:id/alignment.pdf", requireAuth, requireRole("administrator", "assessor"), async (req: AuthedRequest, res) => {
+  const data = await loadAlignment(req.params.id);
+  if (!data) return res.status(404).json({ error: "Instrument not found." });
+  const pdf = await renderAlignment(data);
+  await db.insert(auditLog).values({ actorId: req.auth!.userId, action: "alignment_report_downloaded", targetType: "instrument", targetId: data.instrument.id });
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `${req.query.download ? "attachment" : "inline"}; filename="Alignment-Matrix-${data.qualification.title.replace(/[^A-Za-z0-9]+/g, "-").slice(0, 40)}-${data.instrument.version.replace(/[^A-Za-z0-9.-]+/g, "-")}.pdf"`);
+  return res.send(pdf);
+});

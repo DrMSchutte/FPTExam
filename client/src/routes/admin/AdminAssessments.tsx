@@ -49,6 +49,7 @@ export default function AdminAssessments() {
   const [notes, setNotes] = useState<string | null>(null);
   const [createdId, setCreatedId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showRetired, setShowRetired] = useState(false);
   const [route, setRoute] = useState<IntakeRoute | null>(null);
 
   async function loadAll() {
@@ -74,8 +75,10 @@ export default function AdminAssessments() {
   }
 
   const qualOf = (id: string) => qualifications.find((q) => q.id === id);
-  const readyCount = instruments.filter((i) => i.intakeStatus === "ready" || i.intakeStatus === "override").length;
-  const blockedCount = instruments.filter((i) => i.intakeStatus === "blocked").length;
+  const retiredCount = instruments.filter((i) => i.retiredAt).length;
+  const visible = instruments.filter((i) => showRetired || !i.retiredAt);
+  const readyCount = visible.filter((i) => (i.intakeStatus === "ready" || i.intakeStatus === "override") && !i.supersededById).length;
+  const blockedCount = visible.filter((i) => i.intakeStatus === "blocked").length;
   const meta = route ? routeMeta(route) : null;
 
   return (
@@ -147,7 +150,7 @@ export default function AdminAssessments() {
       </div>
 
       <Card>
-        <CardHead title="All assessments" subtitle="Every paper on the system, how it came in, and where it stands" />
+        <CardHead title="All assessments" subtitle="Every paper on the system, how it came in, and where it stands" right={retiredCount > 0 ? <button type="button" className="lnk" onClick={() => setShowRetired(!showRetired)}>{showRetired ? "Hide retired" : `Show ${retiredCount} retired`}</button> : undefined} />
         <div className="px-2 pb-2">
           {instruments.length ? (
             <table className="data">
@@ -163,7 +166,7 @@ export default function AdminAssessments() {
                 </tr>
               </thead>
               <tbody>
-                {instruments.map((i) => {
+                {visible.map((i) => {
                   const q = qualOf(i.qualificationId);
                   return (
                     <tr key={i.id}>
@@ -182,8 +185,8 @@ export default function AdminAssessments() {
                       <td className="tabular">{i.questions.length}</td>
                       <td className="tabular">{i.timeAllocationMinutes} min</td>
                       <td>
-                        {i.supersededById ? <Badge tone="gray">Superseded</Badge> : <GateBadge status={i.intakeStatus} />}
-                        <p className="t-sub mt-1">{i.supersededById ? "A newer version was pulled in from Curricula Builder" : <VerdictBadge verdict={i.qualityReview?.verdict ?? null} />}</p>
+                        {i.retiredAt ? <Badge tone="gray">Retired</Badge> : i.supersededById ? <Badge tone="gray">Superseded</Badge> : <GateBadge status={i.intakeStatus} />}
+                        <p className="t-sub mt-1">{i.retiredAt ? (i.retireReason ?? "Out of use") : i.supersededById ? "A newer version was pulled in from Curricula Builder" : <VerdictBadge verdict={i.qualityReview?.verdict ?? null} />}</p>
                       </td>
                       <td className="text-right">
                         <Link to={`/admin/assessments/${i.id}`} className="lnk">Open</Link>

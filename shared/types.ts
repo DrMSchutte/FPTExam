@@ -358,6 +358,8 @@ export interface AssessmentInstrument {
   intakeRoute: IntakeRoute;
   externalRef: string | null;
   supersededById?: string | null;
+  retiredAt?: string | null;
+  retireReason?: string | null;
   intakeStatus: IntakeStatus;
   intakeOverrideReason: string | null;
   sourceFiles: string[] | null;

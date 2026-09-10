@@ -246,6 +246,9 @@ export const assessmentInstruments = pgTable("assessment_instruments", {
   // Block 7: when a newer version of the same Curricula Builder assessment is
   // pulled in, the old paper points at it and can no longer be scheduled.
   supersededById: uuid("superseded_by_id"),
+  // A paper taken out of use (kept for the sittings written on it); not schedulable.
+  retiredAt: timestamp("retired_at", { withTimezone: true }),
+  retireReason: text("retire_reason"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

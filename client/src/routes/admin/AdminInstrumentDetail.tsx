@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import { api, pollJob } from "../../lib/api";
 import type { AssessmentInstrument, Qualification, JobProgress, BloomLevel, InstrumentQualityReview, Question } from "@shared/types";
 import { PageHeader, Card, CardHead, Notice, Badge, TypePill, Empty } from "../../components/ui";
@@ -101,6 +101,22 @@ export default function AdminInstrumentDetail() {
   const [progress, setProgress] = useState<JobProgress | null>(null);
   const [showRubrics, setShowRubrics] = useState(false);
   const [overriding, setOverriding] = useState(false);
+  const navigate = useNavigate();
+  const [retiring, setRetiring] = useState(false);
+  const [retireReason, setRetireReason] = useState("");
+  async function retire() {
+    try { const r = await api.post<AssessmentInstrument>(`/instruments/${id}/retire`, { reason: retireReason }); setInstrument((i) => (i ? { ...i, retiredAt: r.retiredAt, retireReason: r.retireReason } : i)); setRetiring(false); setMessage("Paper retired. It stays for the sittings written on it and cannot be scheduled again."); }
+    catch (e) { setError((e as Error).message); }
+  }
+  async function unretire() {
+    try { await api.post(`/instruments/${id}/unretire`); setInstrument((i) => (i ? { ...i, retiredAt: null, retireReason: null } : i)); setMessage("Paper back in use."); }
+    catch (e) { setError((e as Error).message); }
+  }
+  async function deletePaper() {
+    if (!window.confirm("Delete this paper permanently? Only possible when no sitting was ever scheduled on it.")) return;
+    try { await api.del(`/instruments/${id}`); navigate("/admin/assessments", { replace: true }); }
+    catch (e) { setError((e as Error).message); }
+  }
   const [overrideReason, setOverrideReason] = useState("");
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Question[]>([]);
@@ -383,9 +399,35 @@ export default function AdminInstrumentDetail() {
             <button type="button" className="btn-ghost" onClick={runCheck} disabled={checking}>
               {checking ? "Checking…" : review ? "Re-run standard check" : "Run standard check"}
             </button>
+            <a href={`/api/instruments/${id}/alignment.pdf?download=1`} className="btn-ghost whitespace-nowrap" title="The alignment matrix report: verdict, paper shape, coverage of every outcome and criterion, the question × outcome grid and the question index">Alignment matrix (PDF)</a>
           </div>
         }
       />
+      {instrument.retiredAt ? (
+        <div className="mb-4 rounded-lg border border-line bg-surface-2 px-4 py-3 text-[13.5px] flex items-start gap-3">
+          <div className="flex-1"><span className="font-semibold">This paper is retired</span> — {instrument.retireReason ?? "taken out of use"}. It stays for the sittings written on it and cannot be scheduled again.</div>
+          <button type="button" className="btn-ghost btn-sm" onClick={unretire}>Put back in use</button>
+          <button type="button" className="btn-ghost btn-sm text-red-700" onClick={deletePaper}>Delete</button>
+        </div>
+      ) : (
+        <div className="mb-4 flex items-center gap-3 text-[12.5px] text-ink-muted">
+          {retiring ? (
+            <>
+              <input className="inp max-w-md" value={retireReason} onChange={(e) => setRetireReason(e.target.value)} placeholder="Why this paper is being taken out of use (e.g. replaced by 2026-2)" maxLength={300} />
+              <button type="button" className="btn btn-sm" disabled={retireReason.trim().length < 3} onClick={retire}>Retire paper</button>
+              <button type="button" className="btn-ghost btn-sm" onClick={() => setRetiring(false)}>Cancel</button>
+            </>
+          ) : (
+            <>
+              <span>Not using this paper?</span>
+              <button type="button" className="lnk" onClick={() => setRetiring(true)}>Retire it</button>
+              <span className="text-ink-faint">·</span>
+              <button type="button" className="lnk text-red-700" onClick={deletePaper}>Delete it</button>
+              <span className="t-sub">(delete only while no sitting has been scheduled on it; otherwise retire)</span>
+            </>
+          )}
+        </div>
+      )}
       {instrument.supersededById && (
         <div className="mb-4 rounded-lg border border-line bg-surface-2 px-4 py-3 text-[13.5px]">
           <span className="font-semibold">This version has been superseded.</span> A newer release of this assessment was pulled in from Curricula Builder — <Link to={`/admin/assessments/${instrument.supersededById}`} className="lnk">open the current version</Link>. This one stays for the sittings already written on it and cannot be scheduled again.

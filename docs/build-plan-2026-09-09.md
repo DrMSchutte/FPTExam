@@ -298,6 +298,18 @@ recording*; playback is admin / the sitting's invigilators / the assessor of rec
 audited. The integrity engine measures recording coverage (segments against minutes
 written) and the Statement of Results states "recorded in full".
 
+**Papers: retire, delete, alignment matrix (delivered 10 Sep 2026).** On a paper's page:
+**Retire it** (with a reason) takes a paper out of use — it stays for the sittings written
+on it, shows *Retired* and is refused by the scheduler; **Delete it** removes a paper for
+good, allowed only while no sitting was ever scheduled on it (otherwise the system says so
+and offers retire). Retired papers are hidden from the list behind *Show N retired*.
+**Alignment matrix (PDF)** — the quality-assurance record per paper: the standard-check
+verdict and summary, paper shape and cognitive demand against the NQF band, the coverage
+table (every outcome and criterion, status, questions, marks), the question × outcome
+grid, recommendations and question issues, and the question index. Branded A4,
+confidential header and footer; model answers and rubrics are never included. Every
+download is audited.
+
 ## Decisions taken 9 Sep 2026 (were the open decisions)
 
 *Added 10 Sep 2026:* **the shape of a paper.** A Final Integrated Summative Assessment is an
