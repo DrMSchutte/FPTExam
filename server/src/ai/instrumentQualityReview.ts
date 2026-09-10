@@ -1,5 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { createLongMessage, MODEL, type ProgressHook } from "./longCall.js";
+import { BLUEPRINT_TEXT, blueprintProfile, blueprintLine, BLUEPRINT } from "./paperBlueprint.js";
 import type {
   Question,
   BloomLevel,
@@ -157,12 +158,16 @@ Model answer / rubric: ${q.modelAnswerOrRubric ?? "(none)"}`
 
 The paper is sat as a proctored, closed-book examination in one timed session on a locked screen, and every answer is TYPED TEXT in an answer box: no internet, no sources, no files or uploads, no workplace or interview tasks, nothing done over days, and nothing drawn, sketched or plotted (a chart, diagram, organogram or graph cannot be produced in a text box - ask the learner to describe or list it instead). Any question that cannot be fully answered there and then, typed, from the learner's own knowledge plus what the question supplies, is not an exam question - report it as a critical questionIssue.
 
-The standard means: every registered Exit Level Outcome AND every Associated Assessment Criterion is assessed by at least one question that genuinely evidences it; the cognitive demand (revised Bloom's taxonomy) matches the NQF level - competence is shown by application, analysis and evaluation, not recall alone; each question has a rubric an assessor can mark consistently; marks are weighted in proportion to importance; the paper is answerable in the time.
+${BLUEPRINT_TEXT}
+The paper's shape has already been measured against that standard (below); report any shortfall as a recommendation and let it weigh on the verdict.
+
+The standard also means: every registered Exit Level Outcome AND every Associated Assessment Criterion is assessed by at least one question that genuinely evidences it; the cognitive demand (revised Bloom's taxonomy) matches the NQF level - competence is shown by application, analysis and evaluation, not recall alone; each question has a rubric an assessor can mark consistently; marks are weighted in proportion to importance; the paper is answerable in the time.
 
 Facts already computed from the paper (use them, don't recompute):
 - ${profile.questionCount} questions, ${profile.totalMarks} marks, ${input.timeAllocationMinutes} minutes (${profile.minutesPerMark} min/mark).
 - Marks by Bloom's level: ${bloomLine}. Higher-order share (analyse+evaluate+create): ${profile.higherOrderMarkShare}% against an expected ${profile.expectedHigherOrderShare.min}-${profile.expectedHigherOrderShare.max}% (${profile.expectedHigherOrderShare.basis}).
 - Questions with no Bloom's label: ${profile.unlabelledBloom}.
+- Paper shape: ${blueprintLine(blueprintProfile(input.questions))}${blueprintProfile(input.questions).shortfalls.length ? ` - SHORTFALLS: ${blueprintProfile(input.questions).shortfalls.join("; ")}` : " - meets the shape"}.
 - Pass rule: ${input.passRule || "50% overall"}.
 
 ${outcomesBlock}
@@ -256,10 +261,26 @@ export async function reviewInstrumentAgainstStandard(input: QualityReviewInput,
     );
   }
 
+  // Deterministic paper-shape rule (FPT Academy exam standard, 10 Sep 2026):
+  // 20+ multiple choice, 6 knowledge, 6 comprehensive. A QCTO paper short of
+  // the shape does not meet the standard; a non-QCTO paper is flagged.
+  const shape = blueprintProfile(input.questions);
+  if (!shape.meets) {
+    const qcto = input.qctoRegistrationType !== "non_qcto";
+    if (qcto) verdict = "does_not_meet";
+    else if (verdict === "meets_standard") verdict = "meets_with_minor_gaps";
+    recommendations.unshift(
+      `Paper shape: ${blueprintLine(shape)}. ${shape.shortfalls.join("; ")}. ${qcto ? "A FISA/EISA paper must have this shape before it can be scheduled" : "The FPT exam standard is at least 20 multiple choice, 6 knowledge-and-depth and 6 comprehensive questions"} (Fix the gaps restructures the paper towards it).`
+    );
+  }
+  if (input.timeAllocationMinutes < BLUEPRINT.minimumMinutes && shape.meets) {
+    recommendations.push(`Time: a full paper of this shape needs at least ${BLUEPRINT.minimumMinutes} minutes (${BLUEPRINT.recommendedMinutes} recommended); ${input.timeAllocationMinutes} minutes is tight.`);
+  }
+
   return {
     verdict,
     summary: raw.summary ?? "",
-    profile,
+    profile: { ...profile, shape },
     coverage,
     bloomAssessment: raw.bloomAssessment ?? "",
     questionIssues,

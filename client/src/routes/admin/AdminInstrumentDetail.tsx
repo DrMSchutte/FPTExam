@@ -635,7 +635,17 @@ export default function AdminInstrumentDetail() {
                 <BloomDistribution review={review} />
               </Card>
               <Card>
-                <CardHead title="Question mix" />
+                <CardHead title="Paper shape" subtitle="FPT exam standard: at least 20 multiple choice · 6 knowledge-and-depth · 6 comprehensive" right={review.profile.shape ? (review.profile.shape.meets ? <Badge tone="green">Meets the shape</Badge> : <Badge tone="amber">Short of the shape</Badge>) : undefined} />
+                {review.profile.shape && (
+                  <div className="px-5 py-3 border-b border-line text-[13px]">
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      {([["Multiple choice", review.profile.shape.mcq, "20+"], ["Knowledge & depth", review.profile.shape.knowledge, "6"], ["Comprehensive", review.profile.shape.comprehensive, "6"]] as [string, number, string][]).map(([l, n, want]) => (
+                        <div key={l} className="rounded-lg border border-line bg-surface-2 py-2"><div className="font-display font-extrabold text-lg tabular">{n}<span className="text-ink-faint text-[12px] font-normal"> / {want}</span></div><div className="t-sub">{l}</div></div>
+                      ))}
+                    </div>
+                    {review.profile.shape.shortfalls.length > 0 && <ul className="mt-2 space-y-0.5 text-amber-800">{review.profile.shape.shortfalls.map((x) => <li key={x}>· {x}</li>)}</ul>}
+                  </div>
+                )}
                 <ul className="divide-y divide-line">
                   {Object.entries(review.profile.byType).map(([t, v]) => (
                     <li key={t} className="px-5 py-2.5 flex items-center justify-between text-[13px]">

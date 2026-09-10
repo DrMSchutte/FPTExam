@@ -276,6 +276,17 @@ export, issue the key, set the two secrets on FPT Exam, press *Test connection*.
 
 ## Decisions taken 9 Sep 2026 (were the open decisions)
 
+*Added 10 Sep 2026:* **the shape of a paper.** A Final Integrated Summative Assessment is an
+examination: at least **20 multiple-choice** questions (1 mark each), **6 knowledge-and-depth**
+questions (identify, list, explain, describe; short answers, 4–6 marks) and **6 comprehensive**
+questions (evaluate, advise, make the connection, apply to a scenario, fuller written answer —
+analysis and critical thinking; 8–12 marks). No practical activities, uploads or workplace
+tasks — practicals are assessed in the workplace. About 110 marks; 180 minutes recommended,
+110 the minimum. Drafting builds to this shape; the standard check measures every paper
+against it (a QCTO paper short of the shape does not meet the standard and is blocked; a
+non-QCTO paper is flagged); *Fix the gaps* restructures towards it; the instrument page shows
+*Paper shape* with the counts against the standard. Delivered 10 Sep 2026.
+
 *Added 10 Sep 2026:* **one proctoring level only.** Every sitting is fully invigilated as
 built (full screen, camera and screen captures, locks, live invigilator at 1:30). A lighter
 "recorded" mode was considered and declined.

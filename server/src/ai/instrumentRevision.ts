@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { Question, QuestionType, BloomLevel, InstrumentQualityReview } from "../types.js";
 import { bloomGuidanceForNqf } from "./bloom.js";
 import { SITTING_RULE } from "./instrumentGeneration.js";
+import { BLUEPRINT_TEXT, blueprintProfile, blueprintLine } from "./paperBlueprint.js";
 
 // "Fix the gaps": takes a drafted paper together with the moderator's (standard
 // check's) findings and revises the paper so that it meets the assessment
@@ -100,6 +101,8 @@ THE STANDARD THE REVISED PAPER MUST MEET
 4. The whole paper fits ${input.timeAllocationMinutes} minutes: about ${targetMarks} marks in total, and never more than ${markLimit(input.timeAllocationMinutes)} (one mark per minute is the ceiling for a written paper). This is a hard limit - the time allocation is fixed by the qualification, not by you. To make room for uncovered outcomes, remove or merge low-value recall questions and fold several criteria into one well-built application or case question (say which it primarily evidences in acRef). If something honestly cannot be fitted, leave it out and say so in changeSummary rather than exceeding the limit.
 5. Permitted materials: ${input.permittedMaterials.length ? input.permittedMaterials.join(", ") : "none specified"}.
 6. ${SITTING_RULE} Replace any existing question that breaks this rule with one on the same outcome that can be answered in the sitting.
+7. ${BLUEPRINT_TEXT}
+   The paper currently has ${blueprintLine(blueprintProfile(input.questions))}. Restructure towards the shape: convert or add multiple-choice questions until there are at least 20, keep exactly 6 short-answer knowledge questions and exactly 6 long-answer comprehensive questions at analysis/evaluation level. Where the time limit in rule 4 and the shape conflict, keep the section counts and use the lower end of the mark ranges.
 
 HOW TO REVISE
 - Keep every question that already works: return it with its keepId, unchanged or lightly edited (adding the Bloom's label, tightening the rubric, fixing the outcome reference).

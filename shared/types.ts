@@ -582,6 +582,8 @@ export interface InstrumentProfile {
   expectedHigherOrderShare: { min: number; max: number; basis: string }; // from the NQF level
   byEloRef: Record<string, { count: number; marks: number }>;
   unlabelledBloom: number; // questions with no bloomLevel
+  // The paper's shape against the FPT exam standard (20+ MCQ · 6 knowledge · 6 comprehensive).
+  shape?: { mcq: number; knowledge: number; comprehensive: number; comprehensiveLowOrder: number; shortfalls: string[]; meets: boolean };
 }
 
 export interface InstrumentQualityReview {

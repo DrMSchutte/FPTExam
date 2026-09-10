@@ -2,6 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { createLongMessage, MODEL, type ProgressHook } from "./longCall.js";
 import { randomUUID } from "node:crypto";
 import type { Question, QuestionType, BloomLevel } from "../types.js";
+import { BLUEPRINT, BLUEPRINT_TEXT } from "./paperBlueprint.js";
 import { bloomGuidanceForNqf } from "./bloom.js";
 
 
@@ -103,13 +104,16 @@ The paper must be built directly from the assessment's stated outcomes and asses
       : `You are drafting a QCTO ${input.qctoRegistrationType === "eisa" ? "EISA" : "FISA"} final assessment paper for the qualification "${input.qualificationTitle}".
 
 The paper must be built directly from this qualification's registered Exit Level Outcomes (ELOs) and Associated Assessment Criteria (ACs), ${sourceDescription}.`;
-  return `${opening} Draft a full assessment instrument: a mix of question types (multiple choice, short answer, long answer) appropriate to what each outcome actually requires a learner to demonstrate - don't force every outcome into the same question type.
+  const shortTime = input.timeAllocationMinutes < BLUEPRINT.minimumMinutes;
+  return `${opening} Draft the full examination paper.
 
-${SITTING_RULE} Every question must be traceable to a specific ELO/AC via its eloRef field. Aim for enough questions to cover every ELO at least once within the given time allocation; it's fine to leave a gap uncovered rather than write a weak or unsupported question - note any gap in coverageNotes instead.
+${BLUEPRINT_TEXT}
 
-Cognitive demand: ${bloomGuidanceForNqf(input.nqfLevel ?? null)} Label every question with the Bloom's level it genuinely demands (a recall question is "remember" even if the topic is advanced), and do not let recall-only questions dominate a paper at this level. Cover every Assessment Criterion, not only every Exit Level Outcome; where one question can honestly evidence several criteria, say which one it primarily evidences in acRef.
+${SITTING_RULE} Every question must be traceable to a specific ELO/AC via its eloRef field. Spread the ${BLUEPRINT.mcq.min}+ multiple-choice questions so that every ELO is touched; use Section B to check depth of knowledge on the criteria that matter most; use Section C to make the learner integrate outcomes - a scenario that pulls two or three ELOs together is exactly what a final integrated assessment is for. Cover every Assessment Criterion, not only every Exit Level Outcome; where one question honestly evidences several criteria, say which one it primarily evidences in acRef. Note any outcome you could not evidence in coverageNotes rather than writing a weak question for it.
 
-Time allocation for the whole paper: ${input.timeAllocationMinutes} minutes. Size the paper to that time: roughly one mark per 1.5-2 minutes of writing time, so about ${Math.round(input.timeAllocationMinutes / 1.75)} marks in total across ${Math.max(8, Math.min(40, Math.round(input.timeAllocationMinutes / 6)))} or so questions. Keep rubrics specific but compact (3-6 marking points each) - the paper must be complete; never stop part-way through the question list.
+Cognitive demand: ${bloomGuidanceForNqf(input.nqfLevel ?? null)} Label every question with the Bloom's level it genuinely demands (a recall question is "remember" even if the topic is advanced).
+
+Time allocation for the whole paper: ${input.timeAllocationMinutes} minutes. The paper shape above comes to about 110 marks (20 + 6×5 + 6×10), which suits ${BLUEPRINT.recommendedMinutes} minutes.${shortTime ? ` ${input.timeAllocationMinutes} minutes is too short for that shape: keep the section counts, use the lower end of the mark ranges, and say in coverageNotes that the time allocation should be at least ${BLUEPRINT.minimumMinutes} minutes.` : " Use the mark ranges so the total sits at or under one mark per minute."} Keep rubrics specific but compact (3-6 marking points each; comprehensive questions may have more) - the paper must be complete; never stop part-way through the question list.
 Permitted materials: ${input.permittedMaterials.length > 0 ? input.permittedMaterials.join(", ") : "none specified"}.
 
 EXIT LEVEL OUTCOMES (${sourceDescription}):

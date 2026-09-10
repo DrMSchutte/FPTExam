@@ -141,6 +141,12 @@ stored encrypted, masked on screen, revealed only with an audit entry, and print
 only on the Statement of Results. The student number is an optional reference to
 Learnership Manager / FPTStaff.
 
+### The shape of a paper (rule added 10 Sep 2026)
+Every FPT exam paper: at least 20 multiple-choice questions, 6 knowledge-and-depth questions
+(identify, list, explain) and 6 comprehensive questions (evaluate, advise, connect, extended
+answer). No practical uploads or activities. Drafted to this shape; checked against it; a
+QCTO paper short of it is blocked.
+
 ### Every question is answerable in the sitting (rule added 9 Sep 2026)
 A proctored, closed-book, locked-screen sitting cannot accommodate research, internet or
 textbook use, workplace tasks, interviews, or uploading a document — those are assignment

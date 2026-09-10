@@ -95,7 +95,11 @@ Everything in the summary above, plus:
 }
 ```
 
-`type` is one of `mcq | short_answer | long_answer | practical_upload`. `bloomLevel` is
+`type` is one of `mcq | short_answer | long_answer` (`practical_upload` is accepted by the
+schema but blocks the paper on FPT Exam — practicals are assessed in the workplace). FPT Exam's
+paper standard: at least 20 `mcq`, 6 `short_answer` (identify, list, explain) and 6
+`long_answer` (evaluate, advise, analyse); a QCTO paper short of that shape does not pass the
+standard check and cannot be scheduled. `bloomLevel` is
 one of `remember | understand | apply | analyse | evaluate | create`. Every question needs
 a `modelAnswerOrRubric`: it is what the AI Response-Review and the assessor mark against,
 and the standard check will block a paper without one.
