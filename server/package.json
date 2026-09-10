@@ -15,6 +15,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.123.0",
     "@replit/object-storage": "^1.0.0",
+    "@types/archiver": "^6.0.4",
     "@types/bcryptjs": "^2.4.6",
     "@types/cookie-parser": "^1.4.7",
     "@types/cors": "^2.8.17",
@@ -50,7 +51,6 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/archiver": "^6.0.4",
     "drizzle-kit": "^0.24.2"
   }
 }
